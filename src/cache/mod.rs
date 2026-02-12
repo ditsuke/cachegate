@@ -1,0 +1,50 @@
+use async_trait::async_trait;
+use bytes::Bytes;
+use std::hash::{Hash, Hasher};
+
+pub mod memory;
+
+#[derive(Debug, Clone)]
+pub struct CacheEntry {
+    pub bytes: Bytes,
+    pub content_type: Option<String>,
+}
+
+impl CacheEntry {
+    pub fn new(bytes: Bytes, content_type: Option<String>) -> Self {
+        Self { bytes, content_type }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CacheKey {
+    pub bucket_id: String,
+    pub path: String,
+}
+
+impl CacheKey {
+    pub fn new(bucket_id: String, path: String) -> Self {
+        Self { bucket_id, path }
+    }
+}
+
+impl PartialEq for CacheKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.bucket_id == other.bucket_id && self.path == other.path
+    }
+}
+
+impl Eq for CacheKey {}
+
+impl Hash for CacheKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.bucket_id.hash(state);
+        self.path.hash(state);
+    }
+}
+
+#[async_trait]
+pub trait CacheBackend: Send + Sync {
+    async fn get(&self, key: &CacheKey) -> Option<CacheEntry>;
+    async fn put(&self, key: CacheKey, bytes: Bytes, content_type: Option<String>);
+}

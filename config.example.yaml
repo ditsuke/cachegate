@@ -1,0 +1,24 @@
+listen: "0.0.0.0:8080"
+
+auth:
+  public_key: "BASE64URL_PUBLIC_KEY"
+  private_key: "BASE64URL_PRIVATE_KEY"
+
+cache:
+  ttl_seconds: 3600
+  max_bytes: 1073741824
+
+stores:
+  media-s3:
+    type: s3
+    bucket: "my-bucket"
+    region: "us-east-1"
+    access_key: "AKIA..."
+    secret_key: "..."
+    endpoint: null
+    allow_http: false
+  assets-azure:
+    type: azure
+    account: "my-account"
+    container: "assets"
+    access_key: "..."

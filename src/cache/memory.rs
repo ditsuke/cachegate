@@ -1,0 +1,104 @@
+use async_trait::async_trait;
+use bytes::Bytes;
+use lru::LruCache;
+use std::num::NonZeroUsize;
+use time::OffsetDateTime;
+use tokio::sync::Mutex;
+
+use crate::cache::{CacheBackend, CacheEntry, CacheKey};
+use crate::config::CachePolicy;
+
+struct MemoryEntry {
+    bytes: Bytes,
+    content_type: Option<String>,
+    size_bytes: u64,
+    expires_at: i64,
+}
+
+struct CacheState {
+    lru: LruCache<CacheKey, MemoryEntry>,
+    total_bytes: u64,
+    max_bytes: u64,
+    ttl_seconds: u64,
+}
+
+#[derive(Clone)]
+pub struct MemoryCache {
+    state: std::sync::Arc<Mutex<CacheState>>,
+}
+
+impl MemoryCache {
+    pub fn new(policy: CachePolicy) -> Self {
+        let lru = LruCache::new(NonZeroUsize::new(usize::MAX).unwrap());
+        let state = CacheState {
+            lru,
+            total_bytes: 0,
+            max_bytes: policy.max_bytes,
+            ttl_seconds: policy.ttl_seconds,
+        };
+
+        Self {
+            state: std::sync::Arc::new(Mutex::new(state)),
+        }
+    }
+}
+
+#[async_trait]
+impl CacheBackend for MemoryCache {
+    async fn get(&self, key: &CacheKey) -> Option<CacheEntry> {
+        let mut state = self.state.lock().await;
+        let now = OffsetDateTime::now_utc().unix_timestamp();
+        let expired = state
+            .lru
+            .get(key)
+            .map(|entry| entry.expires_at <= now)
+            .unwrap_or(false);
+        if expired {
+            if let Some(removed) = state.lru.pop(key) {
+                state.total_bytes = state.total_bytes.saturating_sub(removed.size_bytes);
+            }
+            return None;
+        }
+
+        state.lru.get(key).map(|entry| {
+            CacheEntry::new(entry.bytes.clone(), entry.content_type.clone())
+        })
+    }
+
+    async fn put(&self, key: CacheKey, bytes: Bytes, content_type: Option<String>) {
+        let mut state = self.state.lock().await;
+        if state.max_bytes == 0 || state.ttl_seconds == 0 {
+            return;
+        }
+
+        let size_bytes = bytes.len() as u64;
+        if size_bytes > state.max_bytes {
+            return;
+        }
+
+        if let Some(existing) = state.lru.pop(&key) {
+            state.total_bytes = state.total_bytes.saturating_sub(existing.size_bytes);
+        }
+
+        let expires_at = OffsetDateTime::now_utc().unix_timestamp()
+            + state.ttl_seconds as i64;
+        let entry = MemoryEntry {
+            bytes,
+            content_type,
+            size_bytes,
+            expires_at,
+        };
+
+        state.lru.put(key, entry);
+        state.total_bytes = state.total_bytes.saturating_add(size_bytes);
+
+        while state.total_bytes > state.max_bytes {
+            if let Some((_key, removed)) = state.lru.pop_lru() {
+                state.total_bytes = state.total_bytes.saturating_sub(removed.size_bytes);
+            } else {
+                break;
+            }
+        }
+    }
+
+}
