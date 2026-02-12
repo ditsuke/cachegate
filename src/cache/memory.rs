@@ -1,7 +1,6 @@
 use async_trait::async_trait;
 use bytes::Bytes;
 use lru::LruCache;
-use std::num::NonZeroUsize;
 use time::OffsetDateTime;
 use tokio::sync::Mutex;
 
@@ -29,7 +28,7 @@ pub struct MemoryCache {
 
 impl MemoryCache {
     pub fn new(policy: CachePolicy) -> Self {
-        let lru = LruCache::new(NonZeroUsize::new(usize::MAX).unwrap());
+        let lru = LruCache::unbounded();
         let state = CacheState {
             lru,
             total_bytes: 0,
