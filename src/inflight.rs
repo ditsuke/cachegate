@@ -34,10 +34,10 @@ impl Inflight {
 
     pub async fn release(&self, key: &CacheKey, notify: Arc<Notify>) {
         let mut guard = self.inner.lock().await;
-        if let Some(current) = guard.get(key) {
-            if Arc::ptr_eq(current, &notify) {
-                guard.remove(key);
-            }
+        if let Some(current) = guard.get(key)
+            && Arc::ptr_eq(current, &notify)
+        {
+            guard.remove(key);
         }
         notify.notify_waiters();
     }
