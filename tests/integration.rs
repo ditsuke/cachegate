@@ -80,8 +80,8 @@ async fn live_minio_readthrough() {
         r#"listen: "{listen}"
 
 auth:
-  public_key: "dummy"
-  private_key: "dummy"
+  public_key: "{public_b64}"
+  private_key: "{private_b64}"
 
 cache:
   ttl_seconds: 60
@@ -90,12 +90,12 @@ cache:
 stores:
   minio-test:
     type: s3
-    bucket: "dummy"
-    region: "us-east-1"
-    access_key: "dummy"
-    secret_key: "dummy"
-    endpoint: null
-    allow_http: false
+    bucket: "{bucket}"
+    region: "{MINIO_REGION}"
+    access_key: "{MINIO_ACCESS_KEY}"
+    secret_key: "{MINIO_SECRET_KEY}"
+    endpoint: "{MINIO_ENDPOINT}"
+    allow_http: true
 "#
     );
     config_file
@@ -104,15 +104,6 @@ stores:
 
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_cachegate"));
     cmd.arg(config_file.path())
-        .env("PROXY_AUTH_PUBLIC_KEY", public_b64)
-        .env("PROXY_AUTH_PRIVATE_KEY", private_b64)
-        .env("PROXY_STORE_MINIO_TEST_TYPE", "s3")
-        .env("PROXY_STORE_MINIO_TEST_BUCKET", &bucket)
-        .env("PROXY_STORE_MINIO_TEST_REGION", MINIO_REGION)
-        .env("PROXY_STORE_MINIO_TEST_ACCESS_KEY", MINIO_ACCESS_KEY)
-        .env("PROXY_STORE_MINIO_TEST_SECRET_KEY", MINIO_SECRET_KEY)
-        .env("PROXY_STORE_MINIO_TEST_ENDPOINT", MINIO_ENDPOINT)
-        .env("PROXY_STORE_MINIO_TEST_ALLOW_HTTP", "true")
         .stdout(Stdio::null())
         .stderr(Stdio::inherit());
 

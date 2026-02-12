@@ -19,7 +19,7 @@ Some design decisions are inspired by [Cachey](https://github.com/s2-streamstore
 
 ## Config
 
-Copy `config.example.yaml` to `config.yaml` and fill credentials.
+Copy `config.example.yaml` to `config.yaml` and fill credentials, or use env-only mode with `--config env`.
 
 Keys are base64url (no padding) Ed25519 keys.
 
@@ -60,31 +60,38 @@ Payload fields:
 {"v":1,"exp":1730000000,"m":"GET","b":"media-s3","p":"path/to/object.txt"}
 ```
 
-### Environment overrides
+### Environment-only config
 
-Environment variables override `config.yaml` when set.
+When using `--config env`, the entire config is read from `CACHEGATE_CONFIG` as YAML or JSON. No merging happens, and missing fields fail startup.
 
-Store IDs are normalized from env keys: single `_` becomes `-`, double `__` becomes `_`, and IDs are lowercased.
+```bash
+export CACHEGATE_CONFIG="$(cat <<'EOF'
+listen: "0.0.0.0:8080"
 
-```
-PROXY_LISTEN=0.0.0.0:8080
-PROXY_AUTH_PUBLIC_KEY=BASE64URL_PUBLIC_KEY
-PROXY_AUTH_PRIVATE_KEY=BASE64URL_PRIVATE_KEY
-PROXY_CACHE_TTL_SECONDS=3600
-PROXY_CACHE_MAX_BYTES=1073741824
+auth:
+  public_key: "BASE64URL_PUBLIC_KEY"
+  private_key: "BASE64URL_PRIVATE_KEY"
 
-PROXY_STORE_MEDIA_S3_TYPE=s3
-PROXY_STORE_MEDIA_S3_BUCKET=my-bucket
-PROXY_STORE_MEDIA_S3_REGION=us-east-1
-PROXY_STORE_MEDIA_S3_ACCESS_KEY=AKIA...
-PROXY_STORE_MEDIA_S3_SECRET_KEY=...
-PROXY_STORE_MEDIA_S3_ENDPOINT=
-PROXY_STORE_MEDIA_S3_ALLOW_HTTP=false
+cache:
+  ttl_seconds: 3600
+  max_bytes: 1073741824
 
-PROXY_STORE_ASSETS_AZURE_TYPE=azure
-PROXY_STORE_ASSETS_AZURE_ACCOUNT=my-account
-PROXY_STORE_ASSETS_AZURE_CONTAINER=assets
-PROXY_STORE_ASSETS_AZURE_ACCESS_KEY=...
+stores:
+  media-s3:
+    type: s3
+    bucket: "my-bucket"
+    region: "us-east-1"
+    access_key: "AKIA..."
+    secret_key: "..."
+    endpoint: null
+    allow_http: false
+  assets-azure:
+    type: azure
+    account: "my-account"
+    container: "assets"
+    access_key: "..."
+EOF
+)"
 ```
 
 The request is:
@@ -103,6 +110,10 @@ Notes:
 
 ```bash
 cargo run -- config.yaml
+```
+
+```bash
+cargo run -- --config env
 ```
 
 ## Tests (MinIO)
