@@ -122,7 +122,7 @@ fn init_sentry(config: &Config) -> Option<sentry::ClientInitGuard> {
             .clone()
             .map(std::borrow::Cow::from),
         release: sentry_config.release.clone().map(std::borrow::Cow::from),
-        traces_sample_rate: Some(sentry_config.traces_sample_rate.unwrap_or(0.1)),
+        traces_sample_rate: sentry_config.traces_sample_rate.unwrap_or(0.1),
         debug: sentry_config.debug.unwrap_or(false),
         ..Default::default()
     };

@@ -10,7 +10,7 @@ use bytes::Bytes;
 use object_store::ObjectStoreExt;
 use serde::Serialize;
 use std::time::Instant;
-use tracing::{info, warn};
+use tracing::{info, info_span, warn};
 
 use crate::auth::AuthState;
 use crate::cache::{CacheBackend, CacheEntry, CacheKey};
@@ -31,45 +31,92 @@ pub async fn get_object(
     Path((bucket_id, path)): Path<(String, String)>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Response<Body>, AppError> {
+    let start = Instant::now();
+    let span = info_span!(
+        "get_object",
+        bucket_id = %bucket_id,
+        path = %path,
+        cache = tracing::field::Empty,
+        inflight = tracing::field::Empty,
+        status = tracing::field::Empty,
+        bytes = tracing::field::Empty,
+        elapsed_ms = tracing::field::Empty
+    );
+    let _enter = span.enter();
+
     state.metrics.inc_requests();
-    let sig = params.get("sig").ok_or_else(|| {
-        state.metrics.inc_auth_fail();
-        AppError::unauthorized("missing signature")
-    })?;
-
-    if path.is_empty() {
-        return Err(AppError::bad_request("missing object path"));
-    }
-
-    if let Err(err) = state.auth.verify("GET", &bucket_id, &path, sig) {
-        warn!(bucket_id = %bucket_id, path = %path, error = %err, "signature verification failed");
-        state.metrics.inc_auth_fail();
-        return Err(AppError::unauthorized("invalid signature"));
-    }
-
     let key = CacheKey::new(bucket_id.clone(), path.clone());
+    let mut response_bytes: Option<usize> = None;
 
-    if let Some(entry) = state.cache.get(&key).await {
-        state.metrics.inc_cache_hit();
-        return Ok(build_response(entry));
-    }
-    state.metrics.inc_cache_miss();
-
-    let permit = state.inflight.acquire(&key).await;
-    match permit {
-        InflightPermit::Leader(notify) => {
-            let result = fetch_and_cache(&state, &key, &bucket_id, &path).await;
-            state.inflight.release(&key, notify).await;
-            result
-        }
-        InflightPermit::Follower(notify) => {
-            notify.notified().await;
-            if let Some(entry) = state.cache.get(&key).await {
-                return Ok(build_response(entry));
+    let result = 'request: {
+        let sig = match params.get("sig") {
+            Some(sig) => sig,
+            None => {
+                state.metrics.inc_auth_fail();
+                break 'request Err(AppError::unauthorized("missing signature"));
             }
-            fetch_and_cache(&state, &key, &bucket_id, &path).await
+        };
+
+        if path.is_empty() {
+            break 'request Err(AppError::bad_request("missing object path"));
+        }
+
+        if let Err(err) = state.auth.verify("GET", &bucket_id, &path, sig) {
+            warn!(bucket_id = %bucket_id, path = %path, error = %err, "signature verification failed");
+            state.metrics.inc_auth_fail();
+            break 'request Err(AppError::unauthorized("invalid signature"));
+        }
+
+        if let Some(entry) = state.cache.get(&key).await {
+            state.metrics.inc_cache_hit();
+            span.record("cache", "hit");
+            response_bytes = Some(entry.bytes.len());
+            info!(bucket_id = %bucket_id, path = %path, bytes = entry.bytes.len(), "served from cache");
+            break 'request Ok(build_response(entry));
+        }
+
+        state.metrics.inc_cache_miss();
+        span.record("cache", "miss");
+        info!(bucket_id = %bucket_id, path = %path, "cache miss");
+
+        let permit = state.inflight.acquire(&key).await;
+        match permit {
+            InflightPermit::Leader(notify) => {
+                span.record("inflight", "leader");
+                info!(bucket_id = %bucket_id, path = %path, "inflight leader fetch");
+                let result = fetch_and_cache(&state, &key, &bucket_id, &path).await;
+                state.inflight.release(&key, notify).await;
+                break 'request result;
+            }
+            InflightPermit::Follower(notify) => {
+                span.record("inflight", "follower");
+                info!(bucket_id = %bucket_id, path = %path, "awaiting inflight leader");
+                notify.notified().await;
+                if let Some(entry) = state.cache.get(&key).await {
+                    response_bytes = Some(entry.bytes.len());
+                    info!(bucket_id = %bucket_id, path = %path, bytes = entry.bytes.len(), "served from cache after inflight");
+                    break 'request Ok(build_response(entry));
+                }
+                break 'request fetch_and_cache(&state, &key, &bucket_id, &path).await;
+            }
+        }
+    };
+
+    span.record("elapsed_ms", start.elapsed().as_millis().to_string());
+    match &result {
+        Ok(response) => {
+            span.record("status", response.status().to_string());
+            if let Some(bytes) = response_bytes {
+                span.record("bytes", bytes.to_string());
+            }
+        }
+        Err(err) => {
+            span.record("status", err.status.to_string());
+            span.record("bytes", "0");
         }
     }
+
+    result
 }
 
 async fn fetch_and_cache(
@@ -78,10 +125,10 @@ async fn fetch_and_cache(
     bucket_id: &str,
     path: &str,
 ) -> Result<Response<Body>, AppError> {
-    let store = state
-        .stores
-        .get(bucket_id)
-        .ok_or_else(|| AppError::not_found("unknown bucket"))?;
+    let store = state.stores.get(bucket_id).ok_or_else(|| {
+        warn!(bucket_id = %bucket_id, path = %path, "unknown bucket");
+        AppError::not_found("unknown bucket")
+    })?;
 
     let location: object_store::path::Path = path.into();
 
@@ -93,6 +140,13 @@ async fn fetch_and_cache(
                 .metrics
                 .observe_upstream_latency_ms(start.elapsed().as_millis() as u64);
             state.metrics.inc_upstream_err();
+            warn!(
+                bucket_id = %bucket_id,
+                path = %path,
+                elapsed_ms = start.elapsed().as_millis(),
+                error = %err,
+                "upstream get failed"
+            );
             return Err(AppError::from_store(err));
         }
     };
@@ -104,6 +158,13 @@ async fn fetch_and_cache(
                 .metrics
                 .observe_upstream_latency_ms(start.elapsed().as_millis() as u64);
             state.metrics.inc_upstream_err();
+            warn!(
+                bucket_id = %bucket_id,
+                path = %path,
+                elapsed_ms = start.elapsed().as_millis(),
+                error = %err,
+                "upstream read failed"
+            );
             return Err(AppError::from_store(err));
         }
     };
@@ -114,12 +175,22 @@ async fn fetch_and_cache(
     state.metrics.inc_upstream_ok();
 
     let content_type = Some(resolve_content_type(path, &bytes));
+    let elapsed_ms = start.elapsed().as_millis();
     state
         .cache
         .put(key.clone(), bytes.clone(), content_type.clone())
         .await;
 
-    info!(bucket_id = %bucket_id, path = %path, size = bytes.len(), "cache miss fetch");
+    let span = tracing::Span::current();
+    span.record("bytes", bytes.len().to_string());
+    info!(
+        bucket_id = %bucket_id,
+        path = %path,
+        size = bytes.len(),
+        elapsed_ms,
+        content_type = %content_type.as_deref().unwrap_or("application/octet-stream"),
+        "cache miss fetch"
+    );
     Ok(build_response(CacheEntry::new(bytes, content_type)))
 }
 
