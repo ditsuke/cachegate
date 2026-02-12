@@ -146,6 +146,23 @@ cargo run -- config.yaml
 cargo run -- --config env
 ```
 
+## Docker
+
+Build and run with env-only config (recommended for containers):
+
+```bash
+docker build -t cachegate .
+docker run --rm -p 8080:8080 \
+  -e CACHEGATE_CONFIG="$(cat config.example.yaml)" \
+  cachegate --config env
+```
+
+Or use the provided compose files (base compose + prod overlay):
+
+```bash
+docker compose -f docker-compose.prod.yml up --build
+```
+
 ## Tests (MinIO)
 
 ```bash

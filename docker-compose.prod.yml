@@ -1,0 +1,35 @@
+include:
+  - docker-compose.yml
+
+services:
+  cachegate:
+    build: .
+    container_name: cachegate
+    environment:
+      CACHEGATE_CONFIG: |
+        listen: "0.0.0.0:8080"
+        auth:
+          public_key: "BASE64URL_PUBLIC_KEY"
+          private_key: "BASE64URL_PRIVATE_KEY"
+        cache:
+          ttl_seconds: 3600
+          max_bytes: 1073741824
+        sentry:
+          dsn: null
+          environment: null
+          release: null
+          traces_sample_rate: 0.1
+          debug: false
+        stores:
+          media-s3:
+            type: s3
+            bucket: "my-bucket"
+            region: "us-east-1"
+            access_key: "minioadmin"
+            secret_key: "minioadmin"
+            endpoint: "http://minio:9000"
+            allow_http: true
+    ports:
+      - "8080:8080"
+    depends_on:
+      - minio
