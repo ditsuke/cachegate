@@ -54,8 +54,14 @@ pub enum StoreConfig {
 }
 
 pub fn load_from_env() -> anyhow::Result<Config> {
-    envious::Config::default()
-        .with_prefix("CACHEGATE__")
-        .build_from_env()
-        .context("failed to parse config from environment variables")
+    // if just CACHEGATE_CONFIG is set, parse that as a full config file, otherwise parse from individual env vars
+
+    if let Ok(config_str) = std::env::var("CACHEGATE_CONFIG") {
+        serde_yaml::from_str(&config_str).context("failed to parse config from CACHEGATE_CONFIG")
+    } else {
+        envious::Config::default()
+            .with_prefix("CACHEGATE__")
+            .build_from_env()
+            .context("failed to parse config from environment variables")
+    }
 }

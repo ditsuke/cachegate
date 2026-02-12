@@ -76,47 +76,6 @@ Payload fields:
 {"v":1,"exp":1730000000,"m":"GET","b":"media-s3","p":"path/to/object.txt"}
 ```
 
-### Environment-only config
-
-When using `--config env`, the entire config is read from `CACHEGATE_CONFIG` as YAML or JSON. No merging happens, and missing fields fail startup.
-
-```bash
-export CACHEGATE_CONFIG="$(cat <<'EOF'
-listen: "0.0.0.0:8080"
-
-auth:
-  public_key: "BASE64URL_PUBLIC_KEY"
-  private_key: "BASE64URL_PRIVATE_KEY"
-
-cache:
-  ttl_seconds: 3600
-  max_bytes: 1073741824
-
-sentry:
-  dsn: null
-  environment: null
-  release: null
-  traces_sample_rate: 0.1
-  debug: false
-
-stores:
-  media-s3:
-    type: s3
-    bucket: "my-bucket"
-    region: "us-east-1"
-    access_key: "AKIA..."
-    secret_key: "..."
-    endpoint: null
-    allow_http: false
-  assets-azure:
-    type: azure
-    account: "my-account"
-    container: "assets"
-    access_key: "..."
-EOF
-)"
-```
-
 The request is:
 
 ```
@@ -134,6 +93,40 @@ Populate response:
 
 ```json
 {"cache_hit":false,"bytes":12345}
+```
+
+## Environment-only config
+
+When using `--config env`, the entire config is read from the environment. We don't
+merge with a config file at the moment: missing fields fail startup. There are two
+variants:
+
+```bash
+# All in one
+CACHEGATE_CONFIG="$(cat config.yaml)" # Config-yaml as a single env var
+
+# Or flat env vars
+CACHEGATE__LISTEN=localhost:9010
+
+CACHEGATE__STORES__minio__type=s3
+CACHEGATE__STORES__minio__endpoint=localhost:9000
+CACHEGATE__STORES__minio__access_key=minioadmin
+CACHEGATE__STORES__minio__secret_key=minioadmin
+CACHEGATE__STORES__minio__region=us-east-1
+CACHEGATE__STORES__minio__bucket=cachegate
+
+CACHEGATE__AUTH__PUBLIC_KEY=PfIG9MO7yrSFq4DNs7GPFC4CticILjGtqpoh43p3ipE
+CACHEGATE__AUTH__PRIVATE_KEY=NC7y4q2_rmnWBhlnEo34B9FddA0DkGlu7XGOs76bZn8
+
+CACHEGATE__CACHE__TTL_SECONDS=3600
+CACHEGATE__CACHE__MAX_BYTES=524288000
+
+# Optional
+#CACHEGATE__SENTRY__DSN=
+#CACHEGATE__SENTRY__ENVIRONMENT=
+#CACHEGATE__SENTRY__TRACES_SAMPLE_RATE=
+#CACHEGATE__SENTRY__RELASE=
+#CACHEGATE__SENTRY__DEBUG=
 ```
 
 ## Run
