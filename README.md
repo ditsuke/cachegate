@@ -130,6 +130,12 @@ Notes:
 - `GET` is accepted for fetch.
 - `POST` is accepted for populate.
 
+Populate response:
+
+```json
+{"cache_hit":false,"bytes":12345}
+```
+
 ## Run
 
 ```bash
