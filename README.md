@@ -23,6 +23,12 @@ Copy `config.example.yaml` to `config.yaml` and fill credentials, or use env-onl
 
 Keys are base64url (no padding) Ed25519 keys.
 
+Generate a new keypair and write it to a YAML file:
+
+```bash
+cargo run -- keygen --out auth.keys.yaml
+```
+
 ```yaml
 listen: "0.0.0.0:8080"
 

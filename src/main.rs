@@ -1,10 +1,13 @@
 use std::sync::Arc;
 
+use anyhow::Context;
 use clap::Parser;
+use serde::Serialize;
+use base64::Engine;
 
 use axum::Router;
 use axum::routing::get;
-use tracing::info;
+use tracing::{error, info};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 mod auth;
@@ -26,10 +29,25 @@ use store::build_stores;
 #[derive(Debug, Parser)]
 #[command(name = "cachegate")]
 struct Args {
+    #[command(subcommand)]
+    command: Option<Command>,
     #[arg(long, value_name = "env|path")]
     config: Option<String>,
     #[arg(value_name = "config.yaml")]
     path: Option<String>,
+}
+
+#[derive(Debug, clap::Subcommand)]
+enum Command {
+    Keygen(KeygenArgs),
+}
+
+#[derive(Debug, Parser)]
+struct KeygenArgs {
+    #[arg(long, default_value = "auth.keys.yaml")]
+    out: String,
+    #[arg(long)]
+    force: bool,
 }
 
 #[derive(Debug)]
@@ -40,6 +58,11 @@ enum ConfigSource {
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+    if let Some(command) = args.command {
+        return match command {
+            Command::Keygen(command_args) => run_keygen(command_args),
+        };
+    }
     let source = match args.config.as_deref() {
         Some("env") => ConfigSource::Env,
         Some(value) => ConfigSource::File(value.to_string()),
@@ -50,10 +73,11 @@ fn main() -> anyhow::Result<()> {
     };
 
     let config: Config = match source {
-        ConfigSource::Env => load_from_env()?,
+        ConfigSource::Env => load_from_env().context("failed to load config from env")?,
         ConfigSource::File(path) => {
-            let raw = std::fs::read_to_string(&path)?;
-            serde_yaml::from_str(&raw)?
+            let raw = std::fs::read_to_string(&path)
+                .with_context(|| format!("failed to read config file {path}"))?;
+            serde_yaml::from_str(&raw).context("failed to parse config file")?
         }
     };
 
@@ -63,14 +87,57 @@ fn main() -> anyhow::Result<()> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
-    runtime.block_on(async_main(config))?;
+    if let Err(err) = runtime.block_on(async_main(config)) {
+        error!(error = %err, "cachegate failed to start");
+        return Err(err);
+    }
 
     Ok(())
 }
 
+fn run_keygen(args: KeygenArgs) -> anyhow::Result<()> {
+    let output_path = std::path::Path::new(&args.out);
+    if output_path.exists() && !args.force {
+        anyhow::bail!("output file already exists: {}", args.out);
+    }
+
+    let mut rng = rand::rngs::OsRng;
+    let signing_key = ed25519_dalek::SigningKey::generate(&mut rng);
+    let verifying_key = signing_key.verifying_key();
+
+    let private_key = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .encode(signing_key.to_bytes());
+    let public_key = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .encode(verifying_key.to_bytes());
+
+    let output = AuthKeyYaml {
+        auth: AuthKeyPair {
+            public_key,
+            private_key,
+        },
+    };
+
+    let yaml = serde_yaml::to_string(&output)?;
+    std::fs::write(output_path, yaml)?;
+    println!("wrote keypair to {}", args.out);
+
+    Ok(())
+}
+
+#[derive(Debug, Serialize)]
+struct AuthKeyYaml {
+    auth: AuthKeyPair,
+}
+
+#[derive(Debug, Serialize)]
+struct AuthKeyPair {
+    public_key: String,
+    private_key: String,
+}
+
 async fn async_main(config: Config) -> anyhow::Result<()> {
-    let auth = AuthState::from_config(&config.auth)?;
-    let stores = build_stores(&config.stores)?;
+    let auth = AuthState::from_config(&config.auth).context("failed to initialize auth")?;
+    let stores = build_stores(&config.stores).context("failed to build stores")?;
     let cache = Arc::new(MemoryCache::new(config.cache.clone()));
     let metrics = Arc::new(Metrics::new());
 
@@ -88,9 +155,11 @@ async fn async_main(config: Config) -> anyhow::Result<()> {
         .route("/:bucket_id/*path", get(handler::get_object))
         .with_state(state);
 
-    let listener = tokio::net::TcpListener::bind(&config.listen).await?;
+    let listener = tokio::net::TcpListener::bind(&config.listen)
+        .await
+        .with_context(|| format!("failed to bind to {}", config.listen))?;
     info!(listen = %config.listen, "listening");
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app).await.context("server failed")?;
 
     Ok(())
 }

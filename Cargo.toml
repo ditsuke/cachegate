@@ -10,12 +10,13 @@ axum = "^0.7"
 base64 = "0.22"
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
-ed25519-dalek = "2"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
 futures = "0.3"
 infer = "0.19"
 lru = "^0.16"
 mime_guess = "2"
 object_store = { version = "0.13", features = ["aws", "azure"] }
+rand = "0.8"
 sentry = "0.34"
 sentry-tower = "0.34"
 sentry-tracing = "0.34"
