@@ -3,6 +3,7 @@ use bytes::Bytes;
 use lru::LruCache;
 use time::OffsetDateTime;
 use tokio::sync::Mutex;
+use tracing::warn;
 
 use crate::cache::{CacheBackend, CacheEntry, CacheKey, CacheStats};
 use crate::config::CachePolicy;
@@ -88,6 +89,13 @@ impl CacheBackend for MemoryCache {
 
         let size_bytes = bytes.len() as u64;
         if size_bytes > state.max_bytes {
+            warn!(
+                bucket_id = %key.bucket_id,
+                path = %key.path,
+                size_bytes,
+                max_bytes = state.max_bytes,
+                "cache entry too large; skipping"
+            );
             return;
         }
 
