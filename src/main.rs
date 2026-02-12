@@ -160,6 +160,7 @@ async fn async_main(config: Config) -> anyhow::Result<()> {
     let app = Router::new()
         .route("/stats", get(handler::stats))
         .route("/metrics", get(handler::metrics))
+        .route("/health", get(handler::health))
         .merge(protected)
         .with_state(state);
 

@@ -422,6 +422,12 @@ pub async fn populate_object(
     result.map(Json)
 }
 
+pub async fn health() -> Result<Response<Body>, AppError> {
+    let mut response = Response::new(Body::from("OK"));
+    *response.status_mut() = StatusCode::OK;
+    Ok(response)
+}
+
 pub async fn metrics(State(state): State<Arc<AppState>>) -> Result<Response<Body>, AppError> {
     let cache_stats = state.cache.stats().await;
     state
