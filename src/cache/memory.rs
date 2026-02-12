@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use bytes::Bytes;
 use lru::LruCache;
-use time::OffsetDateTime;
 use tokio::sync::Mutex;
+use tokio::time::{Duration, Instant};
 use tracing::warn;
 
 use crate::cache::{CacheBackend, CacheEntry, CacheKey, CacheStats};
@@ -12,7 +12,7 @@ struct MemoryEntry {
     bytes: Bytes,
     content_type: Option<String>,
     size_bytes: u64,
-    expires_at: i64,
+    expires_at: Instant,
 }
 
 struct CacheState {
@@ -53,7 +53,7 @@ impl CacheBackend for MemoryCache {
         }
 
         let mut state = self.state.lock().await;
-        let now = OffsetDateTime::now_utc().unix_timestamp();
+        let now = Instant::now();
         let entry = state
             .lru
             .get(key)
@@ -103,7 +103,7 @@ impl CacheBackend for MemoryCache {
             state.total_bytes = state.total_bytes.saturating_sub(existing.size_bytes);
         }
 
-        let expires_at = OffsetDateTime::now_utc().unix_timestamp() + state.ttl_seconds as i64;
+        let expires_at = Instant::now() + Duration::from_secs(state.ttl_seconds);
         let entry = MemoryEntry {
             bytes,
             content_type,
