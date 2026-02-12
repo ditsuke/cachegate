@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 anyhow = "1"
 async-trait = "0.1"
-axum = "^0.7"
+axum = "^0.8"
 base64 = "0.22"
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
@@ -18,9 +18,9 @@ lru = "^0.16"
 mime_guess = "2"
 object_store = { version = "0.13", features = ["aws", "azure"] }
 rand = "0.8"
-sentry = "0.34"
+sentry = "^0.46"
 sentry-tower = "0.34"
-sentry-tracing = "0.34"
+sentry-tracing = "^0.46.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
@@ -35,8 +35,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 aws-config = "1"
 aws-credential-types = "1"
 aws-sdk-s3 = "1"
-reqwest = { version = "^0.12", default-features = false, features = [
+reqwest = { version = "^0.13", default-features = false, features = [
   "json",
-  "rustls-tls",
+  "rustls",
+  "rustls-native-certs",
 ] }
 tempfile = "3"

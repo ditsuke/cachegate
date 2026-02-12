@@ -150,8 +150,11 @@ async fn async_main(config: Config) -> anyhow::Result<()> {
     });
 
     let protected = Router::new()
-        .route("/populate/:bucket_id/*path", post(handler::populate_object))
-        .route("/:bucket_id/*path", get(handler::get_object))
+        .route(
+            "/populate/{bucket_id}/{*path}",
+            post(handler::populate_object),
+        )
+        .route("/{bucket_id}/{*path}", get(handler::get_object))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             handler::auth_middleware,
