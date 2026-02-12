@@ -188,6 +188,116 @@ pub async fn get_object(
     result
 }
 
+pub async fn head_object(
+    State(state): State<Arc<AppState>>,
+    Path((bucket_id, path)): Path<(String, String)>,
+    Query(params): Query<HashMap<String, String>>,
+    Extension(auth): Extension<AuthContext>,
+) -> Result<Response<Body>, AppError> {
+    let start = Instant::now();
+    let span = info_span!(
+        "head_object",
+        bucket_id = %bucket_id,
+        path = %path,
+        auth = tracing::field::Empty,
+        cache = tracing::field::Empty,
+        inflight = tracing::field::Empty,
+        status = tracing::field::Empty,
+        bytes = tracing::field::Empty,
+        elapsed_ms = tracing::field::Empty
+    );
+    let _enter = span.enter();
+
+    state.metrics.inc_requests();
+    span.record("auth", auth.method.as_str());
+    let key = CacheKey::new(bucket_id.clone(), path.clone());
+    let prefetch_enabled = parse_prefetch(&params);
+    let mut response_bytes: Option<usize> = None;
+
+    let result = 'request: {
+        if path.is_empty() || path.contains("..") || path.starts_with('/') {
+            break 'request Err(AppError::bad_request("invalid object path"));
+        }
+
+        if let Some(entry) = state.cache.get(&key).await {
+            state.metrics.inc_cache_hit();
+            span.record("cache", "hit");
+            response_bytes = Some(entry.bytes.len());
+            info!(bucket_id = %bucket_id, path = %path, bytes = entry.bytes.len(), "head served from cache");
+            break 'request Ok(build_head_response(entry));
+        }
+
+        state.metrics.inc_cache_miss();
+        span.record("cache", "miss");
+        info!(bucket_id = %bucket_id, path = %path, "head cache miss");
+
+        if prefetch_enabled {
+            span.record("inflight", "prefetch");
+        } else {
+            span.record("inflight", "skipped");
+        }
+
+        let store = state.stores.get(&bucket_id).ok_or_else(|| {
+            warn!(bucket_id = %bucket_id, path = %path, "unknown bucket");
+            AppError::not_found("unknown bucket")
+        })?;
+        let location: object_store::path::Path = path.as_str().into();
+        let head_start = Instant::now();
+        let meta = match store.head(&location).await {
+            Ok(meta) => {
+                state
+                    .metrics
+                    .observe_upstream_latency_ms(head_start.elapsed().as_millis() as u64);
+                state.metrics.inc_upstream_ok();
+                meta
+            }
+            Err(err) => {
+                state
+                    .metrics
+                    .observe_upstream_latency_ms(head_start.elapsed().as_millis() as u64);
+                state.metrics.inc_upstream_err();
+                warn!(
+                    bucket_id = %bucket_id,
+                    path = %path,
+                    elapsed_ms = head_start.elapsed().as_millis(),
+                    error = %err,
+                    "upstream head failed"
+                );
+                return Err(AppError::from_store(err));
+            }
+        };
+
+        if prefetch_enabled {
+            spawn_head_prefetch(state.clone(), key.clone(), bucket_id.clone(), path.clone());
+        }
+
+        if let Ok(size) = usize::try_from(meta.size) {
+            response_bytes = Some(size);
+        }
+
+        let content_type = mime_guess::from_path(&path)
+            .first()
+            .map(|mime| mime.essence_str().to_string());
+        break 'request Ok(build_head_response_with_meta(meta.size, content_type));
+    };
+
+    span.record("elapsed_ms", start.elapsed().as_millis().to_string());
+    match &result {
+        Ok(response) => {
+            span.record("status", response.status().to_string());
+            if let Some(bytes) = response_bytes {
+                span.record("bytes", bytes.to_string());
+            }
+        }
+        Err(err) => {
+            span.record("status", err.status.to_string());
+            span.record("bytes", "0");
+        }
+    }
+
+    result
+}
+
 async fn fetch_and_cache_entry(
     state: &AppState,
     key: &CacheKey,
@@ -313,115 +423,6 @@ pub async fn stats(State(state): State<Arc<AppState>>) -> Result<Json<StatsRespo
     }))
 }
 
-#[derive(Debug, Serialize)]
-pub struct PopulateResponse {
-    cache_hit: bool,
-    bytes: usize,
-}
-
-pub async fn populate_object(
-    State(state): State<Arc<AppState>>,
-    Path((bucket_id, path)): Path<(String, String)>,
-    Extension(auth): Extension<AuthContext>,
-) -> Result<Json<PopulateResponse>, AppError> {
-    let start = Instant::now();
-    let span = info_span!(
-        "populate_object",
-        bucket_id = %bucket_id,
-        path = %path,
-        auth = tracing::field::Empty,
-        cache = tracing::field::Empty,
-        inflight = tracing::field::Empty,
-        status = tracing::field::Empty,
-        bytes = tracing::field::Empty,
-        elapsed_ms = tracing::field::Empty
-    );
-    let _enter = span.enter();
-
-    state.metrics.inc_requests();
-    span.record("auth", auth.method.as_str());
-    let key = CacheKey::new(bucket_id.clone(), path.clone());
-    let mut response_bytes: Option<usize> = None;
-
-    let result = 'request: {
-        if path.is_empty() || path.contains("..") || path.starts_with('/') {
-            break 'request Err(AppError::bad_request("invalid object path"));
-        }
-
-        if let Some(entry) = state.cache.get(&key).await {
-            state.metrics.inc_cache_hit();
-            span.record("cache", "hit");
-            response_bytes = Some(entry.bytes.len());
-            info!(bucket_id = %bucket_id, path = %path, bytes = entry.bytes.len(), "populate cache hit");
-            break 'request Ok(PopulateResponse {
-                cache_hit: true,
-                bytes: entry.bytes.len(),
-            });
-        }
-
-        state.metrics.inc_cache_miss();
-        span.record("cache", "miss");
-        info!(bucket_id = %bucket_id, path = %path, "populate cache miss");
-
-        let permit = state.inflight.acquire(&key).await;
-        match permit {
-            InflightPermit::Leader(notify) => {
-                span.record("inflight", "leader");
-                info!(bucket_id = %bucket_id, path = %path, "populate inflight leader fetch");
-                let result = fetch_and_cache_entry(&state, &key, &bucket_id, &path)
-                    .await
-                    .map(|entry| {
-                        response_bytes = Some(entry.bytes.len());
-                        PopulateResponse {
-                            cache_hit: false,
-                            bytes: entry.bytes.len(),
-                        }
-                    });
-                state.inflight.release(&key, notify).await;
-                break 'request result;
-            }
-            InflightPermit::Follower(notify) => {
-                span.record("inflight", "follower");
-                info!(bucket_id = %bucket_id, path = %path, "awaiting inflight leader for populate");
-                notify.notified().await;
-                if let Some(entry) = state.cache.get(&key).await {
-                    response_bytes = Some(entry.bytes.len());
-                    info!(bucket_id = %bucket_id, path = %path, bytes = entry.bytes.len(), "populate served from cache after inflight");
-                    break 'request Ok(PopulateResponse {
-                        cache_hit: true,
-                        bytes: entry.bytes.len(),
-                    });
-                }
-                break 'request fetch_and_cache_entry(&state, &key, &bucket_id, &path)
-                    .await
-                    .map(|entry| {
-                        response_bytes = Some(entry.bytes.len());
-                        PopulateResponse {
-                            cache_hit: false,
-                            bytes: entry.bytes.len(),
-                        }
-                    });
-            }
-        }
-    };
-
-    span.record("elapsed_ms", start.elapsed().as_millis().to_string());
-    match &result {
-        Ok(_) => {
-            span.record("status", StatusCode::OK.to_string());
-            if let Some(bytes) = response_bytes {
-                span.record("bytes", bytes.to_string());
-            }
-        }
-        Err(err) => {
-            span.record("status", err.status.to_string());
-            span.record("bytes", "0");
-        }
-    }
-
-    result.map(Json)
-}
-
 pub async fn health() -> Result<Response<Body>, AppError> {
     let mut response = Response::new(Body::from("OK"));
     *response.status_mut() = StatusCode::OK;
@@ -465,6 +466,114 @@ fn build_response(entry: CacheEntry, cache_hit: bool) -> Response<Body> {
     headers.insert(header::CONTENT_LENGTH, len_value);
 
     response
+}
+
+fn build_head_response(entry: CacheEntry) -> Response<Body> {
+    let length = entry.bytes.len();
+    let content_type = entry.content_type;
+
+    let mut response = Response::new(Body::empty());
+    *response.status_mut() = StatusCode::OK;
+
+    let headers = response.headers_mut();
+    if let Some(content_type) = content_type
+        && let Ok(value) = HeaderValue::from_str(&content_type)
+    {
+        headers.insert(header::CONTENT_TYPE, value);
+    }
+    let len_value = HeaderValue::from_str(&length.to_string())
+        .unwrap_or_else(|_| HeaderValue::from_static("0"));
+    headers.insert(header::CONTENT_LENGTH, len_value);
+
+    response
+}
+
+fn build_head_response_with_meta(length: u64, content_type: Option<String>) -> Response<Body> {
+    let mut response = Response::new(Body::empty());
+    *response.status_mut() = StatusCode::OK;
+
+    let headers = response.headers_mut();
+    if let Some(content_type) = content_type
+        && let Ok(value) = HeaderValue::from_str(&content_type)
+    {
+        headers.insert(header::CONTENT_TYPE, value);
+    }
+    let len_value = HeaderValue::from_str(&length.to_string())
+        .unwrap_or_else(|_| HeaderValue::from_static("0"));
+    headers.insert(header::CONTENT_LENGTH, len_value);
+
+    response
+}
+
+fn parse_prefetch(params: &HashMap<String, String>) -> bool {
+    params
+        .get("prefetch")
+        .and_then(|value| parse_prefetch_value(value))
+        .unwrap_or(false)
+}
+
+fn parse_prefetch_value(value: &str) -> Option<bool> {
+    match value {
+        "1" => Some(true),
+        "0" => Some(false),
+        _ if value.eq_ignore_ascii_case("true") => Some(true),
+        _ if value.eq_ignore_ascii_case("false") => Some(false),
+        _ => None,
+    }
+}
+
+fn spawn_head_prefetch(state: Arc<AppState>, key: CacheKey, bucket_id: String, path: String) {
+    // May be dropped, but that's okay.
+    tokio::spawn(async move {
+        let span = info_span!(
+            "head_prefetch",
+            bucket_id = %bucket_id,
+            path = %path,
+            inflight = tracing::field::Empty,
+            status = tracing::field::Empty,
+            error = tracing::field::Empty
+        );
+        let _enter = span.enter();
+
+        let permit = state.inflight.acquire(&key).await;
+        match permit {
+            InflightPermit::Leader(notify) => {
+                span.record("inflight", "leader");
+                info!(bucket_id = %bucket_id, path = %path, "head prefetch leader fetch");
+                let result = fetch_and_cache_entry(&state, &key, &bucket_id, &path).await;
+                match &result {
+                    Ok(entry) => {
+                        span.record("status", "ok");
+                        info!(
+                            bucket_id = %bucket_id,
+                            path = %path,
+                            bytes = entry.bytes.len(),
+                            "head prefetch completed"
+                        );
+                    }
+                    Err(err) => {
+                        span.record("status", err.status.to_string());
+                        span.record("error", err.message.as_str());
+                        warn!(
+                            bucket_id = %bucket_id,
+                            path = %path,
+                            status = %err.status,
+                            "head prefetch failed"
+                        );
+                    }
+                }
+                state.inflight.release(&key, notify).await;
+            }
+            InflightPermit::Follower(_notify) => {
+                span.record("inflight", "follower");
+                info!(
+                    bucket_id = %bucket_id,
+                    path = %path,
+                    "head prefetch skipped; inflight exists"
+                );
+            }
+        }
+    });
 }
 
 fn parse_bearer_token(headers: &HeaderMap) -> Option<String> {

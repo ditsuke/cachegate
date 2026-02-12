@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::net::TcpListener;
 use std::process::{Child, Command, Stdio};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const MINIO_ENDPOINT: &str = "http://127.0.0.1:9000";
 const MINIO_ACCESS_KEY: &str = "minioadmin";
@@ -41,12 +41,6 @@ struct CacheStatsResponse {
     bytes: u64,
 }
 
-#[derive(Deserialize)]
-struct PopulateResponse {
-    cache_hit: bool,
-    bytes: usize,
-}
-
 struct ChildGuard {
     child: Child,
 }
@@ -66,6 +60,7 @@ impl Drop for ChildGuard {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn live_minio_readthrough() {
+    ensure_minio_ready().await;
     let client = minio_client().await;
 
     let bucket = format!("cachegate-test-{}", unix_timestamp());
@@ -124,44 +119,6 @@ stores:
 
     let store_id = "minio-test";
     let http = reqwest::Client::new();
-    let populate_sig = build_sig(&signing_key, store_id, &object_key, "POST");
-    let populate_url = format!("{base_url}/populate/{store_id}/{object_key}?sig={populate_sig}");
-    let populate = http.post(&populate_url).send().await.expect("populate");
-    assert_eq!(populate.status(), StatusCode::OK);
-    let populate_body = populate
-        .json::<PopulateResponse>()
-        .await
-        .expect("populate json");
-    assert!(!populate_body.cache_hit);
-    assert_eq!(populate_body.bytes, payload.len());
-
-    let mut bad_populate_sig = populate_sig.clone();
-    bad_populate_sig.pop();
-    bad_populate_sig.push('x');
-    let bad_populate_url =
-        format!("{base_url}/populate/{store_id}/{object_key}?sig={bad_populate_sig}");
-    let bad_populate = http
-        .post(&bad_populate_url)
-        .send()
-        .await
-        .expect("bad populate sig");
-    assert_eq!(bad_populate.status(), StatusCode::UNAUTHORIZED);
-
-    let bearer_populate_url = format!("{base_url}/populate/{store_id}/{object_key}");
-    let bearer_populate = http
-        .post(&bearer_populate_url)
-        .bearer_auth(TEST_BEARER_TOKEN)
-        .send()
-        .await
-        .expect("bearer populate");
-    assert_eq!(bearer_populate.status(), StatusCode::OK);
-    let bearer_populate_body = bearer_populate
-        .json::<PopulateResponse>()
-        .await
-        .expect("bearer populate json");
-    assert!(bearer_populate_body.cache_hit);
-    assert_eq!(bearer_populate_body.bytes, payload.len());
-
     let sig = build_sig(&signing_key, store_id, &object_key, "GET");
     let url = format!("{base_url}/{store_id}/{object_key}?sig={sig}");
 
@@ -197,6 +154,113 @@ stores:
     assert_eq!(status_header, "hit=1");
     let body = response.bytes().await.expect("read body 2");
     assert_eq!(body.as_ref(), payload.as_slice());
+
+    // HEAD happy path: object exists, return headers only.
+    let head_sig = build_sig(&signing_key, store_id, &object_key, "HEAD");
+    let head_url = format!("{base_url}/{store_id}/{object_key}?sig={head_sig}");
+    let head_response = http.head(&head_url).send().await.expect("head");
+    assert_eq!(head_response.status(), StatusCode::OK);
+    let head_content_length = head_response
+        .headers()
+        .get(reqwest::header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
+    assert_eq!(head_content_length, payload.len().to_string());
+    let head_content_type = head_response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
+    assert!(head_content_type.starts_with("text/plain"));
+    assert!(head_response.headers().get("X-CG-Status").is_none());
+    let head_body = head_response.bytes().await.expect("head body");
+    assert!(head_body.is_empty());
+
+    // HEAD not found: unknown object should return 404.
+    let missing_key = format!("missing-{}.txt", unix_timestamp());
+    let missing_head_sig = build_sig(&signing_key, store_id, &missing_key, "HEAD");
+    let missing_head_url = format!("{base_url}/{store_id}/{missing_key}?sig={missing_head_sig}");
+    let missing_head = http
+        .head(&missing_head_url)
+        .send()
+        .await
+        .expect("missing head");
+    assert_eq!(missing_head.status(), StatusCode::NOT_FOUND);
+
+    // HEAD auth failure: bad signature should be unauthorized.
+    let mut bad_head_sig = head_sig.clone();
+    bad_head_sig.pop();
+    bad_head_sig.push('x');
+    let bad_head_url = format!("{base_url}/{store_id}/{object_key}?sig={bad_head_sig}");
+    let bad_head = http.head(&bad_head_url).send().await.expect("bad head sig");
+    assert_eq!(bad_head.status(), StatusCode::UNAUTHORIZED);
+
+    let stats_before = fetch_stats(&http, &base_url).await;
+    let initial_entries = stats_before.cache.entries;
+
+    let prefetch_off_key = format!("prefetch-off-{}.txt", unix_timestamp());
+    let prefetch_off_payload = b"prefetch off".to_vec();
+    put_object(
+        &client,
+        &bucket,
+        &prefetch_off_key,
+        prefetch_off_payload.clone(),
+    )
+    .await;
+    let prefetch_off_sig = build_sig(&signing_key, store_id, &prefetch_off_key, "HEAD");
+    let prefetch_off_url =
+        format!("{base_url}/{store_id}/{prefetch_off_key}?sig={prefetch_off_sig}");
+    let prefetch_off_response = http
+        .head(&prefetch_off_url)
+        .send()
+        .await
+        .expect("head prefetch off");
+    assert_eq!(prefetch_off_response.status(), StatusCode::OK);
+    let prefetch_off_length = prefetch_off_response
+        .headers()
+        .get(reqwest::header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
+    assert_eq!(prefetch_off_length, prefetch_off_payload.len().to_string());
+    assert_cache_entries_unchanged_for(
+        &http,
+        &base_url,
+        initial_entries,
+        Duration::from_millis(400),
+    )
+    .await;
+
+    let prefetch_on_key = format!("prefetch-on-{}.txt", unix_timestamp());
+    let prefetch_on_payload = b"prefetch on".to_vec();
+    put_object(
+        &client,
+        &bucket,
+        &prefetch_on_key,
+        prefetch_on_payload.clone(),
+    )
+    .await;
+    let prefetch_on_sig = build_sig(&signing_key, store_id, &prefetch_on_key, "HEAD");
+    let prefetch_on_url =
+        format!("{base_url}/{store_id}/{prefetch_on_key}?sig={prefetch_on_sig}&prefetch=1");
+    let prefetch_on_response = http
+        .head(&prefetch_on_url)
+        .send()
+        .await
+        .expect("head prefetch on");
+    assert_eq!(prefetch_on_response.status(), StatusCode::OK);
+    let prefetch_on_length = prefetch_on_response
+        .headers()
+        .get(reqwest::header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
+    assert_eq!(prefetch_on_length, prefetch_on_payload.len().to_string());
+    wait_for_cache_entries_at_least(
+        &http,
+        &base_url,
+        initial_entries + 1,
+        Duration::from_secs(3),
+    )
+    .await;
 
     let stats = http
         .get(format!("{base_url}/stats"))
@@ -328,4 +392,76 @@ async fn wait_for_ready(base_url: &str) {
     }
 
     panic!("cachegate not ready: {:?}", last_error);
+}
+
+async fn fetch_stats(client: &reqwest::Client, base_url: &str) -> StatsResponse {
+    client
+        .get(format!("{base_url}/stats"))
+        .send()
+        .await
+        .expect("stats")
+        .json::<StatsResponse>()
+        .await
+        .expect("stats json")
+}
+
+async fn wait_for_cache_entries_at_least(
+    client: &reqwest::Client,
+    base_url: &str,
+    expected: u64,
+    timeout: Duration,
+) {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let stats = fetch_stats(client, base_url).await;
+        if stats.cache.entries >= expected {
+            return;
+        }
+        if Instant::now() >= deadline {
+            panic!(
+                "expected cache entries >= {}, got {}",
+                expected, stats.cache.entries
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+async fn assert_cache_entries_unchanged_for(
+    client: &reqwest::Client,
+    base_url: &str,
+    expected: u64,
+    duration: Duration,
+) {
+    let deadline = Instant::now() + duration;
+    loop {
+        let stats = fetch_stats(client, base_url).await;
+        if stats.cache.entries != expected {
+            panic!(
+                "expected cache entries to stay at {}, got {}",
+                expected, stats.cache.entries
+            );
+        }
+        if Instant::now() >= deadline {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+async fn ensure_minio_ready() {
+    let client = reqwest::Client::new();
+    let url = format!("{MINIO_ENDPOINT}/minio/health/ready");
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .expect("minio readiness check failed to send request");
+    if !response.status().is_success() {
+        panic!(
+            "minio readiness check failed: {} returned {}",
+            MINIO_ENDPOINT,
+            response.status()
+        );
+    }
 }

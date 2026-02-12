@@ -5,7 +5,7 @@ use tracing_subscriber::fmt;
 use anyhow::Context;
 use axum::Router;
 use axum::middleware;
-use axum::routing::{get, post};
+use axum::routing::get;
 use base64::Engine;
 use clap::Parser;
 use serde::Serialize;
@@ -151,10 +151,9 @@ async fn async_main(config: Config) -> anyhow::Result<()> {
 
     let protected = Router::new()
         .route(
-            "/populate/{bucket_id}/{*path}",
-            post(handler::populate_object),
+            "/{bucket_id}/{*path}",
+            get(handler::get_object).head(handler::head_object),
         )
-        .route("/{bucket_id}/{*path}", get(handler::get_object))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             handler::auth_middleware,

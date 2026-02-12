@@ -10,8 +10,9 @@ Some design decisions are inspired by [Cachey](https://github.com/s2-streamstore
 
 - Designed exclusively for immutable blobs. Assumes objects are never modified or deleted after creation.
 - `GET /:bucket_id/*path`
-- `POST /populate/:bucket_id/*path`
-  - Populate warms the cache without returning the object body
+- `HEAD /:bucket_id/*path`
+- `HEAD /:bucket_id/*path?prefetch=true|false|1|0`
+  - Prefetch warms the cache without blocking HEAD
 - Auth
   - Presigned URL auth via `?sig=<payload>.<signature>`
   - Bearer token auth via `Authorization: Bearer <token>`
@@ -68,7 +69,7 @@ stores:
     access_key: "..."
 ```
 
-## Presign format
+## Presigned auth
 
 `sig` is a base64url JSON payload and a base64url Ed25519 signature of the raw payload bytes.
 
@@ -89,7 +90,8 @@ Notes:
 - `p` is the decoded request path after `/:bucket_id/`.
 - `exp` is a unix timestamp in seconds.
 - `GET` is accepted for fetch.
-- `POST` is accepted for populate.
+- `HEAD` is accepted for metadata-only fetch.
+- `prefetch` is optional for `HEAD`. Default is `false`.
 
 ## Bearer token format
 
@@ -99,14 +101,8 @@ If `auth.bearer_token` is set, you can authenticate requests with:
 Authorization: Bearer <token>
 ```
 
-Bearer and presigned auth are both accepted for `GET` and `POST /populate`.
+Bearer and presigned auth are both accepted for `GET` and `HEAD`.
 If `bearer_token` is unset, only presign auth is available.
-
-Populate response:
-
-```json
-{"cache_hit":false,"bytes":12345}
-```
 
 ## Environment-only config
 
