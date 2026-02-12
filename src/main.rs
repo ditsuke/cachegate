@@ -3,12 +3,11 @@ use tracing_error::ErrorLayer;
 use tracing_subscriber::fmt;
 
 use anyhow::Context;
-use clap::Parser;
-use serde::Serialize;
-use base64::Engine;
-
 use axum::Router;
 use axum::routing::{get, post};
+use base64::Engine;
+use clap::Parser;
+use serde::Serialize;
 use tracing::{error, info};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt};
 use tracing_subscriber::{Layer, Registry};
@@ -36,8 +35,6 @@ struct Args {
     command: Option<Command>,
     #[arg(long, value_name = "env|path")]
     config: Option<String>,
-    #[arg(value_name = "config.yaml")]
-    path: Option<String>,
 }
 
 #[derive(Debug, clap::Subcommand)]
@@ -69,10 +66,9 @@ fn main() -> anyhow::Result<()> {
     let source = match args.config.as_deref() {
         Some("env") => ConfigSource::Env,
         Some(value) => ConfigSource::File(value.to_string()),
-        None => match args.path {
-            Some(path) => ConfigSource::File(path),
-            None => ConfigSource::File("config.yaml".to_string()),
-        },
+        None => anyhow::bail!(
+            "config source must be specified with --config, either 'env' or a file path"
+        ),
     };
 
     let config: Config = match source {
@@ -108,10 +104,10 @@ fn run_keygen(args: KeygenArgs) -> anyhow::Result<()> {
     let signing_key = ed25519_dalek::SigningKey::generate(&mut rng);
     let verifying_key = signing_key.verifying_key();
 
-    let private_key = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .encode(signing_key.to_bytes());
-    let public_key = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .encode(verifying_key.to_bytes());
+    let private_key =
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(signing_key.to_bytes());
+    let public_key =
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(verifying_key.to_bytes());
 
     let output = AuthKeyYaml {
         auth: AuthKeyPair {

@@ -109,7 +109,8 @@ stores:
         .expect("write config");
 
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_cachegate"));
-    cmd.arg(config_file.path())
+    cmd.arg("--config")
+        .arg(config_file.path())
         .stdout(Stdio::null())
         .stderr(Stdio::inherit());
 
@@ -123,11 +124,7 @@ stores:
     let http = reqwest::Client::new();
     let populate_sig = build_sig(&signing_key, store_id, &object_key, "POST");
     let populate_url = format!("{base_url}/populate/{store_id}/{object_key}?sig={populate_sig}");
-    let populate = http
-        .post(&populate_url)
-        .send()
-        .await
-        .expect("populate");
+    let populate = http.post(&populate_url).send().await.expect("populate");
     assert_eq!(populate.status(), StatusCode::OK);
     let populate_body = populate
         .json::<PopulateResponse>()

@@ -1,7 +1,6 @@
 use anyhow::Context;
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::env;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
@@ -55,6 +54,8 @@ pub enum StoreConfig {
 }
 
 pub fn load_from_env() -> anyhow::Result<Config> {
-    let raw = env::var("CACHEGATE_CONFIG").with_context(|| "missing CACHEGATE_CONFIG")?;
-    serde_yaml::from_str(&raw).with_context(|| "invalid CACHEGATE_CONFIG")
+    envious::Config::default()
+        .with_prefix("CACHEGATE__")
+        .build_from_env()
+        .context("failed to parse config from environment variables")
 }
