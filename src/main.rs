@@ -1,4 +1,6 @@
 use std::sync::Arc;
+use tracing_error::ErrorLayer;
+use tracing_subscriber::fmt;
 
 use anyhow::Context;
 use clap::Parser;
@@ -8,7 +10,8 @@ use base64::Engine;
 use axum::Router;
 use axum::routing::{get, post};
 use tracing::{error, info};
-use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt};
+use tracing_subscriber::{Layer, Registry};
 
 mod auth;
 mod cache;
@@ -165,21 +168,6 @@ async fn async_main(config: Config) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn init_tracing(enable_sentry: bool) {
-    if enable_sentry {
-        tracing_subscriber::registry()
-            .with(EnvFilter::from_default_env())
-            .with(tracing_subscriber::fmt::layer())
-            .with(sentry_tracing::layer())
-            .init();
-    } else {
-        tracing_subscriber::registry()
-            .with(EnvFilter::from_default_env())
-            .with(tracing_subscriber::fmt::layer())
-            .init();
-    }
-}
-
 fn init_sentry(config: &Config) -> Option<sentry::ClientInitGuard> {
     let sentry_config = config.sentry.as_ref()?;
     let dsn = sentry_config.dsn.as_deref()?;
@@ -198,4 +186,51 @@ fn init_sentry(config: &Config) -> Option<sentry::ClientInitGuard> {
     };
 
     Some(sentry::init(options))
+}
+
+type BoxedLayer = Box<dyn Layer<Registry> + Send + Sync>;
+
+fn init_tracing(sentry_enabled: bool) {
+    let enable_pretty = std::env::var("CACHEGATE_LOG_PRETTY")
+        .ok()
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+
+    let mut layers = Vec::<BoxedLayer>::new();
+
+    // 1. Environment filter (log level from RUST_LOG)
+    layers.push(
+        EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| EnvFilter::new("info"))
+            .boxed(),
+    );
+
+    layers.push(make_fmt_layer(enable_pretty));
+
+    layers.push(ErrorLayer::default().boxed());
+
+    if sentry_enabled {
+        layers.push(sentry_tracing::layer().boxed());
+    }
+
+    // 5. Compose all layers into one subscriber
+    let subscriber = tracing_subscriber::registry().with(layers);
+
+    // 6. Set as global default
+    tracing::subscriber::set_global_default(subscriber).expect("Failed to set global subscriber");
+}
+
+fn make_fmt_layer(enable_pretty: bool) -> BoxedLayer {
+    if enable_pretty {
+        fmt::layer()
+            .pretty()
+            .with_target(false)
+            .with_thread_ids(true)
+            .boxed()
+    } else {
+        fmt::layer()
+            .with_target(false)
+            .with_thread_ids(true)
+            .boxed()
+    }
 }
