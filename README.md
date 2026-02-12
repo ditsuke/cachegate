@@ -1,16 +1,21 @@
 # Cachegate
 
-Minimal read-only proxy for S3 and Azure Blob Storage with presigned URL auth and in-memory LRU cache.
+Minimal read-only proxy for S3 and Azure Blob Storage.
+
+Allows for presigned-URL style access to objects to allow for constrained public access.
+
+Some design decisions are inspired by [Cachey](https://github.com/s2-streamstore/cachey).
 
 ## Features
 
+- Designed exclusively for immutable blobs. Assumes objects are never modified or deleted after creation.
 - `GET /:bucket_id/*path` only
-- Presigned URL auth via `?sig=<payload>.<signature>`
+  - Presigned URL auth via `?sig=<payload>.<signature>`
 - Modular store registry (`s3`, `azure`)
 - In-memory LRU cache with TTL + max bytes
-- Singleflight on cache misses to avoid duplicate upstream fetches
-- Content-Type guessed from path, with magic fallback
-- `/stats` JSON and `/metrics` Prometheus endpoints
+- Singleflight on cache misses to avoid thundering herd
+- Content-Type prefill, from path with `magic` fallback.
+- `/stats` and Prometheus-compatible `/metrics`.
 
 ## Config
 
