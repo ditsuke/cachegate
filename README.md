@@ -34,6 +34,13 @@ cache:
   ttl_seconds: 3600
   max_bytes: 1073741824
 
+sentry:
+  dsn: null
+  environment: null
+  release: null
+  traces_sample_rate: 0.1
+  debug: false
+
 stores:
   media-s3:
     type: s3
@@ -75,6 +82,13 @@ auth:
 cache:
   ttl_seconds: 3600
   max_bytes: 1073741824
+
+sentry:
+  dsn: null
+  environment: null
+  release: null
+  traces_sample_rate: 0.1
+  debug: false
 
 stores:
   media-s3:
@@ -128,6 +142,8 @@ cargo test
 `GET /stats` returns JSON counters and cache size.
 
 `GET /metrics` returns Prometheus text with counters and an upstream latency histogram.
+
+Optional Sentry instrumentation is enabled by setting `sentry.dsn` in config. Tracing is controlled by `sentry.traces_sample_rate`.
 
 ## Cache behavior
 

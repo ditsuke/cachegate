@@ -9,6 +9,8 @@ pub struct Config {
     pub stores: HashMap<String, StoreConfig>,
     pub auth: AuthConfig,
     pub cache: CachePolicy,
+    #[serde(default)]
+    pub sentry: Option<SentryConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -21,6 +23,15 @@ pub struct AuthConfig {
 pub struct CachePolicy {
     pub ttl_seconds: u64,
     pub max_bytes: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SentryConfig {
+    pub dsn: Option<String>,
+    pub environment: Option<String>,
+    pub release: Option<String>,
+    pub traces_sample_rate: Option<f32>,
+    pub debug: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

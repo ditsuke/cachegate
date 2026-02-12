@@ -8,6 +8,13 @@ cache:
   ttl_seconds: 3600
   max_bytes: 1073741824
 
+sentry:
+  dsn: null
+  environment: null
+  release: null
+  traces_sample_rate: 0.1
+  debug: false
+
 stores:
   media-s3:
     type: s3

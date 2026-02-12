@@ -1,5 +1,10 @@
 # TODOs
 
+## Observability
+
+- [x] Optional sentry instrumentation.
+- [x] Prometheus metrics.
+
 ## Performance
 
 - [ ] Stream object instead of fetch -> save -> serve.
@@ -9,6 +14,7 @@
 
 - [ ] More store types (GCS, filesystem, etc).
 - [ ] Fixed-token auth, when pre-signing is not necessary.
+- [ ] `/populate/{bucket}/{path}` endpoint to pre-populate cache. This would be useful for objects that are expected to be hot but haven't been accessed yet.
 
 ## Scaling
 

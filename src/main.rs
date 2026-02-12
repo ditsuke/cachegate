@@ -5,7 +5,7 @@ use clap::Parser;
 use axum::Router;
 use axum::routing::get;
 use tracing::info;
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 mod auth;
 mod cache;
@@ -38,12 +38,7 @@ enum ConfigSource {
     File(String),
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
-        .init();
-
+fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let source = match args.config.as_deref() {
         Some("env") => ConfigSource::Env,
@@ -57,11 +52,23 @@ async fn main() -> anyhow::Result<()> {
     let config: Config = match source {
         ConfigSource::Env => load_from_env()?,
         ConfigSource::File(path) => {
-            let raw = tokio::fs::read_to_string(&path).await?;
+            let raw = std::fs::read_to_string(&path)?;
             serde_yaml::from_str(&raw)?
         }
     };
 
+    let sentry_guard = init_sentry(&config);
+    init_tracing(sentry_guard.is_some());
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async_main(config))?;
+
+    Ok(())
+}
+
+async fn async_main(config: Config) -> anyhow::Result<()> {
     let auth = AuthState::from_config(&config.auth)?;
     let stores = build_stores(&config.stores)?;
     let cache = Arc::new(MemoryCache::new(config.cache.clone()));
@@ -86,4 +93,39 @@ async fn main() -> anyhow::Result<()> {
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+fn init_tracing(enable_sentry: bool) {
+    if enable_sentry {
+        tracing_subscriber::registry()
+            .with(EnvFilter::from_default_env())
+            .with(tracing_subscriber::fmt::layer())
+            .with(sentry_tracing::layer())
+            .init();
+    } else {
+        tracing_subscriber::registry()
+            .with(EnvFilter::from_default_env())
+            .with(tracing_subscriber::fmt::layer())
+            .init();
+    }
+}
+
+fn init_sentry(config: &Config) -> Option<sentry::ClientInitGuard> {
+    let sentry_config = config.sentry.as_ref()?;
+    let dsn = sentry_config.dsn.as_deref()?;
+    let dsn = dsn.parse().ok()?;
+
+    let options = sentry::ClientOptions {
+        dsn: Some(dsn),
+        environment: sentry_config
+            .environment
+            .clone()
+            .map(std::borrow::Cow::from),
+        release: sentry_config.release.clone().map(std::borrow::Cow::from),
+        traces_sample_rate: Some(sentry_config.traces_sample_rate.unwrap_or(0.1)),
+        debug: sentry_config.debug.unwrap_or(false),
+        ..Default::default()
+    };
+
+    Some(sentry::init(options))
 }
