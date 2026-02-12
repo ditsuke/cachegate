@@ -9,8 +9,10 @@ services:
       CACHEGATE_CONFIG: |
         listen: "0.0.0.0:8080"
         auth:
-          public_key: "BASE64URL_PUBLIC_KEY"
-          private_key: "BASE64URL_PRIVATE_KEY"
+          # Replace these keys ;)
+          public_key: "PfIG9MO7yrSFq4DNs7GPFC4CticILjGtqpoh43p3ipE"
+          private_key: "NC7y4q2_rmnWBhlnEo34B9FddA0DkGlu7XGOs76bZn8"
+          bearer_token: "hicg="
         cache:
           ttl_seconds: 3600
           max_bytes: 1073741824
