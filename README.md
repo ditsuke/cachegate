@@ -100,6 +100,13 @@ Notes:
 cargo run -- config.yaml
 ```
 
+## Tests (MinIO)
+
+```bash
+docker compose up -d
+cargo test
+```
+
 ## Monitoring
 
 `GET /stats` returns JSON counters and cache size.
