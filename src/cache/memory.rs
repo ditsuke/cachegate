@@ -45,24 +45,39 @@ impl MemoryCache {
 #[async_trait]
 impl CacheBackend for MemoryCache {
     async fn get(&self, key: &CacheKey) -> Option<CacheEntry> {
-        let mut state = self.state.lock().await;
-        let now = OffsetDateTime::now_utc().unix_timestamp();
-        let expired = state
-            .lru
-            .get(key)
-            .map(|entry| entry.expires_at <= now)
-            .unwrap_or(false);
-        if expired {
-            if let Some(removed) = state.lru.pop(key) {
-                state.total_bytes = state.total_bytes.saturating_sub(removed.size_bytes);
-            }
-            return None;
+        enum LookupResult {
+            Hit(CacheEntry),
+            Miss,
+            Expired,
         }
 
-        state
+        let mut state = self.state.lock().await;
+        let now = OffsetDateTime::now_utc().unix_timestamp();
+        let entry = state
             .lru
             .get(key)
-            .map(|entry| CacheEntry::new(entry.bytes.clone(), entry.content_type.clone()))
+            .map(|entry| {
+                if entry.expires_at <= now {
+                    LookupResult::Expired
+                } else {
+                    LookupResult::Hit(CacheEntry::new(
+                        entry.bytes.clone(),
+                        entry.content_type.clone(),
+                    ))
+                }
+            })
+            .unwrap_or(LookupResult::Miss);
+
+        match entry {
+            LookupResult::Hit(hit) => return Some(hit),
+            LookupResult::Expired => {
+                if let Some(removed) = state.lru.pop(key) {
+                    state.total_bytes = state.total_bytes.saturating_sub(removed.size_bytes);
+                }
+                None
+            }
+            LookupResult::Miss => None,
+        }
     }
 
     async fn put(&self, key: CacheKey, bytes: Bytes, content_type: Option<String>) {

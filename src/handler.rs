@@ -83,9 +83,7 @@ async fn fetch_and_cache(
         .get(bucket_id)
         .ok_or_else(|| AppError::not_found("unknown bucket"))?;
 
-    let location: object_store::path::Path = path
-        .try_into()
-        .map_err(|_| AppError::bad_request("invalid object path"))?;
+    let location: object_store::path::Path = path.into();
 
     let start = Instant::now();
     let result = match store.get(&location).await {
