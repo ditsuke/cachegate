@@ -29,6 +29,12 @@ pub enum AuthError {
     InvalidKeyMaterial,
     #[error("public and private keys do not match")]
     KeyMismatch,
+    #[error("missing auth")]
+    MissingAuth,
+    #[error("invalid bearer token")]
+    InvalidBearer,
+    #[error("bearer token not configured")]
+    BearerNotConfigured,
 }
 
 #[derive(Debug, Deserialize)]
@@ -48,6 +54,27 @@ struct PresignPayload {
 #[derive(Clone)]
 pub struct AuthState {
     verifying_key: VerifyingKey,
+    bearer_token: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum AuthMethod {
+    Bearer,
+    Presign,
+}
+
+impl AuthMethod {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Bearer => "bearer",
+            Self::Presign => "presign",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct AuthContext {
+    pub method: AuthMethod,
 }
 
 impl AuthState {
@@ -75,6 +102,7 @@ impl AuthState {
 
         Ok(Self {
             verifying_key: public_key,
+            bearer_token: config.bearer_token.clone(),
         })
     }
 
@@ -122,6 +150,18 @@ impl AuthState {
         self.verifying_key
             .verify_strict(&payload_bytes, &signature)
             .map_err(|_| AuthError::InvalidSignature)
+    }
+
+    pub fn verify_bearer(&self, token: &str) -> Result<(), AuthError> {
+        let expected = self
+            .bearer_token
+            .as_deref()
+            .ok_or(AuthError::BearerNotConfigured)?;
+        if token == expected {
+            Ok(())
+        } else {
+            Err(AuthError::InvalidBearer)
+        }
     }
 }
 

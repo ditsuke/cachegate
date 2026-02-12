@@ -4,6 +4,7 @@ use tracing_subscriber::fmt;
 
 use anyhow::Context;
 use axum::Router;
+use axum::middleware;
 use axum::routing::{get, post};
 use base64::Engine;
 use clap::Parser;
@@ -148,11 +149,18 @@ async fn async_main(config: Config) -> anyhow::Result<()> {
         metrics,
     });
 
+    let protected = Router::new()
+        .route("/populate/:bucket_id/*path", post(handler::populate_object))
+        .route("/:bucket_id/*path", get(handler::get_object))
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            handler::auth_middleware,
+        ));
+
     let app = Router::new()
         .route("/stats", get(handler::stats))
         .route("/metrics", get(handler::metrics))
-        .route("/populate/:bucket_id/*path", post(handler::populate_object))
-        .route("/:bucket_id/*path", get(handler::get_object))
+        .merge(protected)
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(&config.listen)

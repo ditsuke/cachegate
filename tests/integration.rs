@@ -17,6 +17,7 @@ const MINIO_ENDPOINT: &str = "http://127.0.0.1:9000";
 const MINIO_ACCESS_KEY: &str = "minioadmin";
 const MINIO_SECRET_KEY: &str = "minioadmin";
 const MINIO_REGION: &str = "us-east-1";
+const TEST_BEARER_TOKEN: &str = "cachegate-test-token";
 
 #[derive(Serialize)]
 struct PresignPayload {
@@ -88,6 +89,7 @@ async fn live_minio_readthrough() {
 auth:
   public_key: "{public_b64}"
   private_key: "{private_b64}"
+  bearer_token: "{TEST_BEARER_TOKEN}"
 
 cache:
   ttl_seconds: 60
@@ -145,8 +147,34 @@ stores:
         .expect("bad populate sig");
     assert_eq!(bad_populate.status(), StatusCode::UNAUTHORIZED);
 
+    let bearer_populate_url = format!("{base_url}/populate/{store_id}/{object_key}");
+    let bearer_populate = http
+        .post(&bearer_populate_url)
+        .bearer_auth(TEST_BEARER_TOKEN)
+        .send()
+        .await
+        .expect("bearer populate");
+    assert_eq!(bearer_populate.status(), StatusCode::OK);
+    let bearer_populate_body = bearer_populate
+        .json::<PopulateResponse>()
+        .await
+        .expect("bearer populate json");
+    assert!(bearer_populate_body.cache_hit);
+    assert_eq!(bearer_populate_body.bytes, payload.len());
+
     let sig = build_sig(&signing_key, store_id, &object_key, "GET");
     let url = format!("{base_url}/{store_id}/{object_key}?sig={sig}");
+
+    let bearer_url = format!("{base_url}/{store_id}/{object_key}");
+    let response = http
+        .get(&bearer_url)
+        .bearer_auth(TEST_BEARER_TOKEN)
+        .send()
+        .await
+        .expect("bearer get");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.bytes().await.expect("read bearer body");
+    assert_eq!(body.as_ref(), payload.as_slice());
 
     let response = http.get(&url).send().await.expect("first get");
     assert_eq!(response.status(), StatusCode::OK);
@@ -189,6 +217,14 @@ stores:
     let bad_url = format!("{base_url}/{store_id}/{object_key}?sig={bad_sig}");
     let response = http.get(&bad_url).send().await.expect("bad sig");
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    let bad_bearer = http
+        .get(&bearer_url)
+        .bearer_auth("bad-token")
+        .send()
+        .await
+        .expect("bad bearer");
+    assert_eq!(bad_bearer.status(), StatusCode::UNAUTHORIZED);
 
     let unknown_sig = build_sig(&signing_key, "unknown", &object_key, "GET");
     let unknown_url = format!("{base_url}/unknown/{object_key}?sig={unknown_sig}");

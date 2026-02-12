@@ -3,8 +3,9 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::body::Body;
-use axum::extract::{Path, Query, State};
-use axum::http::{HeaderValue, Response, StatusCode, header};
+use axum::extract::{Extension, FromRequestParts, Path, Query, State};
+use axum::http::{HeaderMap, HeaderValue, Request, Response, StatusCode, header};
+use axum::middleware::Next;
 use axum::response::IntoResponse;
 use bytes::Bytes;
 use object_store::ObjectStoreExt;
@@ -12,7 +13,7 @@ use serde::Serialize;
 use std::time::Instant;
 use tracing::{info, info_span, warn};
 
-use crate::auth::AuthState;
+use crate::auth::{AuthContext, AuthError, AuthMethod, AuthState};
 use crate::cache::{CacheBackend, CacheEntry, CacheKey};
 use crate::inflight::{Inflight, InflightPermit};
 use crate::metrics::Metrics;
@@ -26,16 +27,87 @@ pub struct AppState {
     pub metrics: Arc<Metrics>,
 }
 
+pub async fn auth_middleware(
+    State(state): State<Arc<AppState>>,
+    request: Request<Body>,
+    next: Next,
+) -> Result<Response<Body>, AppError> {
+    let (mut parts, body) = request.into_parts();
+    let Path((bucket_id, path)) = Path::<(String, String)>::from_request_parts(&mut parts, &state)
+        .await
+        .map_err(|_| AppError::bad_request("invalid path"))?;
+
+    let Query(params) = Query::<HashMap<String, String>>::from_request_parts(&mut parts, &state)
+        .await
+        .map_err(|_| AppError::bad_request("invalid query"))?;
+    let method = parts.method.to_string();
+
+    let span = info_span!(
+        "auth_check",
+        bucket_id = %bucket_id,
+        path = %path,
+        method = %method,
+        auth = tracing::field::Empty,
+        status = tracing::field::Empty,
+        error = tracing::field::Empty
+    );
+    let _enter = span.enter();
+
+    let bearer_token = parse_bearer_token(&parts.headers);
+    let mut auth_method = None;
+    let mut last_error: Option<AuthError> = None;
+
+    if let Some(token) = bearer_token.as_deref() {
+        match state.auth.verify_bearer(token) {
+            Ok(_) => auth_method = Some(AuthMethod::Bearer),
+            Err(err) => last_error = Some(err),
+        }
+    }
+
+    if auth_method.is_none() {
+        if let Some(sig) = params.get("sig") {
+            match state.auth.verify(&method, &bucket_id, &path, sig) {
+                Ok(_) => auth_method = Some(AuthMethod::Presign),
+                Err(err) => last_error = Some(err),
+            }
+        } else if last_error.is_none() {
+            last_error = Some(AuthError::MissingAuth);
+        }
+    }
+
+    let auth_method = match auth_method {
+        Some(method) => method,
+        None => {
+            state.metrics.inc_auth_fail();
+            let error = last_error.unwrap_or(AuthError::MissingAuth);
+            span.record("status", StatusCode::UNAUTHORIZED.to_string());
+            span.record("error", error.to_string());
+            warn!(bucket_id = %bucket_id, path = %path, error = %error, "auth failed");
+            return Err(AppError::unauthorized("invalid auth"));
+        }
+    };
+
+    span.record("auth", auth_method.as_str());
+    span.record("status", StatusCode::OK.to_string());
+
+    let mut request = Request::from_parts(parts, body);
+    request.extensions_mut().insert(AuthContext {
+        method: auth_method,
+    });
+    Ok(next.run(request).await)
+}
+
 pub async fn get_object(
     State(state): State<Arc<AppState>>,
     Path((bucket_id, path)): Path<(String, String)>,
-    Query(params): Query<HashMap<String, String>>,
+    Extension(auth): Extension<AuthContext>,
 ) -> Result<Response<Body>, AppError> {
     let start = Instant::now();
     let span = info_span!(
         "get_object",
         bucket_id = %bucket_id,
         path = %path,
+        auth = tracing::field::Empty,
         cache = tracing::field::Empty,
         inflight = tracing::field::Empty,
         status = tracing::field::Empty,
@@ -45,26 +117,13 @@ pub async fn get_object(
     let _enter = span.enter();
 
     state.metrics.inc_requests();
+    span.record("auth", auth.method.as_str());
     let key = CacheKey::new(bucket_id.clone(), path.clone());
     let mut response_bytes: Option<usize> = None;
 
     let result = 'request: {
-        let sig = match params.get("sig") {
-            Some(sig) => sig,
-            None => {
-                state.metrics.inc_auth_fail();
-                break 'request Err(AppError::unauthorized("missing signature"));
-            }
-        };
-
         if path.is_empty() {
             break 'request Err(AppError::bad_request("missing object path"));
-        }
-
-        if let Err(err) = state.auth.verify("GET", &bucket_id, &path, sig) {
-            warn!(bucket_id = %bucket_id, path = %path, error = %err, "signature verification failed");
-            state.metrics.inc_auth_fail();
-            break 'request Err(AppError::unauthorized("invalid signature"));
         }
 
         if let Some(entry) = state.cache.get(&key).await {
@@ -263,13 +322,14 @@ pub struct PopulateResponse {
 pub async fn populate_object(
     State(state): State<Arc<AppState>>,
     Path((bucket_id, path)): Path<(String, String)>,
-    Query(params): Query<HashMap<String, String>>,
+    Extension(auth): Extension<AuthContext>,
 ) -> Result<Json<PopulateResponse>, AppError> {
     let start = Instant::now();
     let span = info_span!(
         "populate_object",
         bucket_id = %bucket_id,
         path = %path,
+        auth = tracing::field::Empty,
         cache = tracing::field::Empty,
         inflight = tracing::field::Empty,
         status = tracing::field::Empty,
@@ -279,26 +339,13 @@ pub async fn populate_object(
     let _enter = span.enter();
 
     state.metrics.inc_requests();
+    span.record("auth", auth.method.as_str());
     let key = CacheKey::new(bucket_id.clone(), path.clone());
     let mut response_bytes: Option<usize> = None;
 
     let result = 'request: {
-        let sig = match params.get("sig") {
-            Some(sig) => sig,
-            None => {
-                state.metrics.inc_auth_fail();
-                break 'request Err(AppError::unauthorized("missing signature"));
-            }
-        };
-
         if path.is_empty() {
             break 'request Err(AppError::bad_request("missing object path"));
-        }
-
-        if let Err(err) = state.auth.verify("POST", &bucket_id, &path, sig) {
-            warn!(bucket_id = %bucket_id, path = %path, error = %err, "signature verification failed");
-            state.metrics.inc_auth_fail();
-            break 'request Err(AppError::unauthorized("invalid signature"));
         }
 
         if let Some(entry) = state.cache.get(&key).await {
@@ -412,6 +459,18 @@ fn build_response(entry: CacheEntry, cache_hit: bool) -> Response<Body> {
     headers.insert(header::CONTENT_LENGTH, len_value);
 
     response
+}
+
+fn parse_bearer_token(headers: &HeaderMap) -> Option<String> {
+    let value = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
+    let mut parts = value.split_whitespace();
+    let scheme = parts.next()?;
+    let token = parts.next()?;
+    if scheme.eq_ignore_ascii_case("bearer") && !token.is_empty() {
+        Some(token.to_string())
+    } else {
+        None
+    }
 }
 
 #[derive(Debug)]

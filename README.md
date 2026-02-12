@@ -14,6 +14,7 @@ Some design decisions are inspired by [Cachey](https://github.com/s2-streamstore
   - Populate warms the cache without returning the object body
 - Auth
   - Presigned URL auth via `?sig=<payload>.<signature>`
+  - Bearer token auth via `Authorization: Bearer <token>`
 - Modular store registry (`s3`, `azure`)
 - In-memory LRU cache with TTL + max bytes
 - Singleflight on cache misses to avoid thundering herd
@@ -38,6 +39,7 @@ listen: "0.0.0.0:8080"
 auth:
   public_key: "BASE64URL_PUBLIC_KEY"
   private_key: "BASE64URL_PRIVATE_KEY"
+  bearer_token: "OPTIONAL_STATIC_TOKEN"
 
 cache:
   ttl_seconds: 3600
@@ -89,6 +91,17 @@ Notes:
 - `GET` is accepted for fetch.
 - `POST` is accepted for populate.
 
+## Bearer token format
+
+If `auth.bearer_token` is set, you can authenticate requests with:
+
+```
+Authorization: Bearer <token>
+```
+
+Bearer and presigned auth are both accepted for `GET` and `POST /populate`.
+If `bearer_token` is unset, only presign auth is available.
+
 Populate response:
 
 ```json
@@ -117,6 +130,7 @@ CACHEGATE__STORES__minio__bucket=cachegate
 
 CACHEGATE__AUTH__PUBLIC_KEY=PfIG9MO7yrSFq4DNs7GPFC4CticILjGtqpoh43p3ipE
 CACHEGATE__AUTH__PRIVATE_KEY=NC7y4q2_rmnWBhlnEo34B9FddA0DkGlu7XGOs76bZn8
+CACHEGATE__AUTH__BEARER_TOKEN=cachegate-secret
 
 CACHEGATE__CACHE__TTL_SECONDS=3600
 CACHEGATE__CACHE__MAX_BYTES=524288000

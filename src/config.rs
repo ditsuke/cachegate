@@ -16,6 +16,8 @@ pub struct Config {
 pub struct AuthConfig {
     pub public_key: String,
     pub private_key: String,
+    #[serde(default)]
+    pub bearer_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

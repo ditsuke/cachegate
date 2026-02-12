@@ -13,7 +13,7 @@
 ## Inline with Scope
 
 - [ ] More store types (GCS, filesystem, etc).
-- [ ] Fixed-token auth, when pre-signing is not necessary.
+- [x] Fixed-token auth, when pre-signing is not necessary.
 - [x] `/populate/{bucket}/{path}` endpoint to pre-populate cache. This would be useful for objects that are expected to be hot but haven't been accessed yet.
 - [ ] Multiple config files. If given, merge all in order before parsing final config. This can be useful when secrets
 are split in some environments, like in kubernetes with configmaps and secrets.
