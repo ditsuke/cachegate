@@ -120,11 +120,23 @@ stores:
 
     let response = http.get(&url).send().await.expect("first get");
     assert_eq!(response.status(), StatusCode::OK);
+    let status_header = response
+        .headers()
+        .get("X-CG-Status")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
+    assert_eq!(status_header, "hit=0");
     let body = response.bytes().await.expect("read body");
     assert_eq!(body.as_ref(), payload.as_slice());
 
     let response = http.get(&url).send().await.expect("second get");
     assert_eq!(response.status(), StatusCode::OK);
+    let status_header = response
+        .headers()
+        .get("X-CG-Status")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
+    assert_eq!(status_header, "hit=1");
     let body = response.bytes().await.expect("read body 2");
     assert_eq!(body.as_ref(), payload.as_slice());
 

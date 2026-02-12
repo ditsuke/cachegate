@@ -72,7 +72,7 @@ pub async fn get_object(
             span.record("cache", "hit");
             response_bytes = Some(entry.bytes.len());
             info!(bucket_id = %bucket_id, path = %path, bytes = entry.bytes.len(), "served from cache");
-            break 'request Ok(build_response(entry));
+            break 'request Ok(build_response(entry, true));
         }
 
         state.metrics.inc_cache_miss();
@@ -95,7 +95,7 @@ pub async fn get_object(
                 if let Some(entry) = state.cache.get(&key).await {
                     response_bytes = Some(entry.bytes.len());
                     info!(bucket_id = %bucket_id, path = %path, bytes = entry.bytes.len(), "served from cache after inflight");
-                    break 'request Ok(build_response(entry));
+                    break 'request Ok(build_response(entry, true));
                 }
                 break 'request fetch_and_cache(&state, &key, &bucket_id, &path).await;
             }
@@ -191,7 +191,7 @@ async fn fetch_and_cache(
         content_type = %content_type.as_deref().unwrap_or("application/octet-stream"),
         "cache miss fetch"
     );
-    Ok(build_response(CacheEntry::new(bytes, content_type)))
+    Ok(build_response(CacheEntry::new(bytes, content_type), false))
 }
 
 fn resolve_content_type(path: &str, bytes: &Bytes) -> String {
@@ -258,7 +258,7 @@ pub async fn metrics(State(state): State<Arc<AppState>>) -> Result<Response<Body
     Ok(response)
 }
 
-fn build_response(entry: CacheEntry) -> Response<Body> {
+fn build_response(entry: CacheEntry, cache_hit: bool) -> Response<Body> {
     let bytes = entry.bytes;
     let content_type = entry.content_type;
     let length = bytes.len();
@@ -271,6 +271,10 @@ fn build_response(entry: CacheEntry) -> Response<Body> {
         && let Ok(value) = HeaderValue::from_str(&content_type)
     {
         headers.insert(header::CONTENT_TYPE, value);
+    }
+    let cache_status = if cache_hit { "hit=1" } else { "hit=0" };
+    if let Ok(value) = HeaderValue::from_str(cache_status) {
+        headers.insert("X-CG-Status", value);
     }
     let len_value = HeaderValue::from_str(&length.to_string())
         .unwrap_or_else(|_| HeaderValue::from_static("0"));
