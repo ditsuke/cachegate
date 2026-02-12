@@ -14,7 +14,7 @@
 
 - [ ] More store types (GCS, filesystem, etc).
 - [ ] Fixed-token auth, when pre-signing is not necessary.
-- [ ] `/populate/{bucket}/{path}` endpoint to pre-populate cache. This would be useful for objects that are expected to be hot but haven't been accessed yet.
+- [x] `/populate/{bucket}/{path}` endpoint to pre-populate cache. This would be useful for objects that are expected to be hot but haven't been accessed yet.
 
 ## Scaling
 

@@ -9,7 +9,10 @@ Some design decisions are inspired by [Cachey](https://github.com/s2-streamstore
 ## Features
 
 - Designed exclusively for immutable blobs. Assumes objects are never modified or deleted after creation.
-- `GET /:bucket_id/*path` only
+- `GET /:bucket_id/*path`
+- `POST /populate/:bucket_id/*path`
+  - Populate warms the cache without returning the object body
+- Auth
   - Presigned URL auth via `?sig=<payload>.<signature>`
 - Modular store registry (`s3`, `azure`)
 - In-memory LRU cache with TTL + max bytes
@@ -124,7 +127,8 @@ Notes:
 
 - `p` is the decoded request path after `/:bucket_id/`.
 - `exp` is a unix timestamp in seconds.
-- Only `GET` is accepted.
+- `GET` is accepted for fetch.
+- `POST` is accepted for populate.
 
 ## Run
 

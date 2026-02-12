@@ -6,7 +6,7 @@ use serde::Serialize;
 use base64::Engine;
 
 use axum::Router;
-use axum::routing::get;
+use axum::routing::{get, post};
 use tracing::{error, info};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -152,6 +152,7 @@ async fn async_main(config: Config) -> anyhow::Result<()> {
     let app = Router::new()
         .route("/stats", get(handler::stats))
         .route("/metrics", get(handler::metrics))
+        .route("/populate/:bucket_id/*path", post(handler::populate_object))
         .route("/:bucket_id/*path", get(handler::get_object))
         .with_state(state);
 

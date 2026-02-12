@@ -40,6 +40,12 @@ struct CacheStatsResponse {
     bytes: u64,
 }
 
+#[derive(Deserialize)]
+struct PopulateResponse {
+    cache_hit: bool,
+    bytes: usize,
+}
+
 struct ChildGuard {
     child: Child,
 }
@@ -115,6 +121,33 @@ stores:
 
     let store_id = "minio-test";
     let http = reqwest::Client::new();
+    let populate_sig = build_sig(&signing_key, store_id, &object_key, "POST");
+    let populate_url = format!("{base_url}/populate/{store_id}/{object_key}?sig={populate_sig}");
+    let populate = http
+        .post(&populate_url)
+        .send()
+        .await
+        .expect("populate");
+    assert_eq!(populate.status(), StatusCode::OK);
+    let populate_body = populate
+        .json::<PopulateResponse>()
+        .await
+        .expect("populate json");
+    assert!(!populate_body.cache_hit);
+    assert_eq!(populate_body.bytes, payload.len());
+
+    let mut bad_populate_sig = populate_sig.clone();
+    bad_populate_sig.pop();
+    bad_populate_sig.push('x');
+    let bad_populate_url =
+        format!("{base_url}/populate/{store_id}/{object_key}?sig={bad_populate_sig}");
+    let bad_populate = http
+        .post(&bad_populate_url)
+        .send()
+        .await
+        .expect("bad populate sig");
+    assert_eq!(bad_populate.status(), StatusCode::UNAUTHORIZED);
+
     let sig = build_sig(&signing_key, store_id, &object_key, "GET");
     let url = format!("{base_url}/{store_id}/{object_key}?sig={sig}");
 
@@ -125,7 +158,7 @@ stores:
         .get("X-CG-Status")
         .and_then(|value| value.to_str().ok())
         .unwrap_or("");
-    assert_eq!(status_header, "hit=0");
+    assert_eq!(status_header, "hit=1");
     let body = response.bytes().await.expect("read body");
     assert_eq!(body.as_ref(), payload.as_slice());
 
