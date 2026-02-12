@@ -5,7 +5,7 @@ use std::num::NonZeroUsize;
 use time::OffsetDateTime;
 use tokio::sync::Mutex;
 
-use crate::cache::{CacheBackend, CacheEntry, CacheKey};
+use crate::cache::{CacheBackend, CacheEntry, CacheKey, CacheStats};
 use crate::config::CachePolicy;
 
 struct MemoryEntry {
@@ -98,6 +98,14 @@ impl CacheBackend for MemoryCache {
             } else {
                 break;
             }
+        }
+    }
+
+    async fn stats(&self) -> CacheStats {
+        let state = self.state.lock().await;
+        CacheStats {
+            entries: state.lru.len(),
+            total_bytes: state.total_bytes,
         }
     }
 

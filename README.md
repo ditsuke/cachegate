@@ -10,6 +10,7 @@ Minimal read-only proxy for S3 and Azure Blob Storage with presigned URL auth an
 - In-memory LRU cache with TTL + max bytes
 - Singleflight on cache misses to avoid duplicate upstream fetches
 - Content-Type guessed from path, with magic fallback
+- `/stats` JSON and `/metrics` Prometheus endpoints
 
 ## Config
 
@@ -98,6 +99,12 @@ Notes:
 ```bash
 cargo run -- config.yaml
 ```
+
+## Monitoring
+
+`GET /stats` returns JSON counters and cache size.
+
+`GET /metrics` returns Prometheus text with counters and an upstream latency histogram.
 
 ## Cache behavior
 

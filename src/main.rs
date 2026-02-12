@@ -10,6 +10,7 @@ mod cache;
 mod config;
 mod handler;
 mod inflight;
+mod metrics;
 mod store;
 
 use auth::AuthState;
@@ -17,6 +18,7 @@ use cache::memory::MemoryCache;
 use config::{apply_env_overrides, Config};
 use handler::AppState;
 use inflight::Inflight;
+use metrics::Metrics;
 use store::build_stores;
 
 #[tokio::main]
@@ -35,15 +37,19 @@ async fn main() -> anyhow::Result<()> {
     let auth = AuthState::from_config(&config.auth)?;
     let stores = build_stores(&config.stores)?;
     let cache = Arc::new(MemoryCache::new(config.cache.clone()));
+    let metrics = Arc::new(Metrics::new());
 
     let state = Arc::new(AppState {
         stores,
         auth,
         cache,
         inflight: Arc::new(Inflight::new()),
+        metrics,
     });
 
     let app = Router::new()
+        .route("/stats", get(handler::stats))
+        .route("/metrics", get(handler::metrics))
         .route("/:bucket_id/*path", get(handler::get_object))
         .with_state(state);
 

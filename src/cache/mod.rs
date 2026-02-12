@@ -22,6 +22,12 @@ pub struct CacheKey {
     pub path: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct CacheStats {
+    pub entries: usize,
+    pub total_bytes: u64,
+}
+
 impl CacheKey {
     pub fn new(bucket_id: String, path: String) -> Self {
         Self { bucket_id, path }
@@ -47,4 +53,5 @@ impl Hash for CacheKey {
 pub trait CacheBackend: Send + Sync {
     async fn get(&self, key: &CacheKey) -> Option<CacheEntry>;
     async fn put(&self, key: CacheKey, bytes: Bytes, content_type: Option<String>);
+    async fn stats(&self) -> CacheStats;
 }
