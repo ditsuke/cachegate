@@ -122,9 +122,10 @@ stores:
     let base_url = format!("http://{listen}");
     wait_for_ready(&base_url).await;
 
+    let store_id = "minio-test";
     let http = reqwest::Client::new();
-    let sig = build_sig(&signing_key, &bucket, &object_key, "GET");
-    let url = format!("{base_url}/minio-test/{object_key}?sig={sig}");
+    let sig = build_sig(&signing_key, store_id, &object_key, "GET");
+    let url = format!("{base_url}/{store_id}/{object_key}?sig={sig}");
 
     let response = http.get(&url).send().await.expect("first get");
     assert_eq!(response.status(), StatusCode::OK);
@@ -152,7 +153,7 @@ stores:
     let mut bad_sig = sig.clone();
     bad_sig.pop();
     bad_sig.push('x');
-    let bad_url = format!("{base_url}/minio-test/{object_key}?sig={bad_sig}");
+    let bad_url = format!("{base_url}/{store_id}/{object_key}?sig={bad_sig}");
     let response = http.get(&bad_url).send().await.expect("bad sig");
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 
