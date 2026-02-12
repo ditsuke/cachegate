@@ -1,11 +1,11 @@
 use aws_config::BehaviorVersion;
 use aws_credential_types::Credentials;
+use aws_sdk_s3::Client as S3Client;
 use aws_sdk_s3::config::Region;
 use aws_sdk_s3::primitives::ByteStream;
-use aws_sdk_s3::Client as S3Client;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
-use ed25519_dalek::{Signature, SigningKey, Signer};
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use ed25519_dalek::{Signature, Signer, SigningKey};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::io::Write;
@@ -189,13 +189,7 @@ fn build_sig(signing_key: &SigningKey, bucket: &str, path: &str, method: &str) -
 }
 
 async fn minio_client() -> S3Client {
-    let creds = Credentials::new(
-        MINIO_ACCESS_KEY,
-        MINIO_SECRET_KEY,
-        None,
-        None,
-        "static",
-    );
+    let creds = Credentials::new(MINIO_ACCESS_KEY, MINIO_SECRET_KEY, None, None, "static");
     let region = Region::new(MINIO_REGION);
 
     let config = aws_config::defaults(BehaviorVersion::latest())

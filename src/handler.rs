@@ -1,16 +1,16 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use axum::Json;
 use axum::body::Body;
 use axum::extract::{Path, Query, State};
-use axum::http::{header, HeaderValue, Response, StatusCode};
+use axum::http::{HeaderValue, Response, StatusCode, header};
 use axum::response::IntoResponse;
-use axum::Json;
 use bytes::Bytes;
-use serde::Serialize;
-use tracing::{info, warn};
 use object_store::ObjectStoreExt;
+use serde::Serialize;
 use std::time::Instant;
+use tracing::{info, warn};
 
 use crate::auth::AuthState;
 use crate::cache::{CacheBackend, CacheEntry, CacheKey};
@@ -32,12 +32,10 @@ pub async fn get_object(
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Response<Body>, AppError> {
     state.metrics.inc_requests();
-    let sig = params
-        .get("sig")
-        .ok_or_else(|| {
-            state.metrics.inc_auth_fail();
-            AppError::unauthorized("missing signature")
-        })?;
+    let sig = params.get("sig").ok_or_else(|| {
+        state.metrics.inc_auth_fail();
+        AppError::unauthorized("missing signature")
+    })?;
 
     if path.is_empty() {
         return Err(AppError::bad_request("missing object path"));
@@ -184,9 +182,10 @@ pub async fn metrics(State(state): State<Arc<AppState>>) -> Result<Response<Body
         .set_cache_stats(cache_stats.entries, cache_stats.total_bytes);
     let body = state.metrics.render_prometheus();
     let mut response = Response::new(Body::from(body));
-    response
-        .headers_mut()
-        .insert(header::CONTENT_TYPE, HeaderValue::from_static("text/plain; version=0.0.4"));
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/plain; version=0.0.4"),
+    );
     Ok(response)
 }
 
@@ -199,10 +198,10 @@ fn build_response(entry: CacheEntry) -> Response<Body> {
     *response.status_mut() = StatusCode::OK;
 
     let headers = response.headers_mut();
-    if let Some(content_type) = content_type {
-        if let Ok(value) = HeaderValue::from_str(&content_type) {
-            headers.insert(header::CONTENT_TYPE, value);
-        }
+    if let Some(content_type) = content_type
+        && let Ok(value) = HeaderValue::from_str(&content_type)
+    {
+        headers.insert(header::CONTENT_TYPE, value);
     }
     let len_value = HeaderValue::from_str(&length.to_string())
         .unwrap_or_else(|_| HeaderValue::from_static("0"));
@@ -241,9 +240,7 @@ impl AppError {
 
     fn from_store(error: object_store::Error) -> Self {
         match error {
-            object_store::Error::NotFound { .. } => {
-                Self::not_found("object not found")
-            }
+            object_store::Error::NotFound { .. } => Self::not_found("object not found"),
             _ => Self {
                 status: StatusCode::BAD_GATEWAY,
                 message: "upstream error".to_string(),

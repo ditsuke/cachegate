@@ -1,5 +1,5 @@
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use ed25519_dalek::{Signature, SigningKey, VerifyingKey};
 use serde::Deserialize;
 use thiserror::Error;
@@ -33,11 +33,16 @@ pub enum AuthError {
 
 #[derive(Debug, Deserialize)]
 struct PresignPayload {
-    v: u8,
-    exp: i64,
-    m: String,
-    b: String,
-    p: String,
+    #[serde(rename = "v")]
+    version: u8,
+    #[serde(rename = "exp")]
+    expiry: i64,
+    #[serde(rename = "m")]
+    method: String,
+    #[serde(rename = "b")]
+    bucket_id: String,
+    #[serde(rename = "p")]
+    path: String,
 }
 
 #[derive(Clone)]
@@ -89,19 +94,19 @@ impl AuthState {
         let payload: PresignPayload =
             serde_json::from_slice(&payload_bytes).map_err(|_| AuthError::MalformedPayload)?;
 
-        if payload.v != 1 {
+        if payload.version != 1 {
             return Err(AuthError::UnsupportedVersion);
         }
-        if payload.exp < OffsetDateTime::now_utc().unix_timestamp() {
+        if payload.expiry < OffsetDateTime::now_utc().unix_timestamp() {
             return Err(AuthError::Expired);
         }
-        if payload.m.to_uppercase() != method.to_uppercase() {
+        if payload.method.to_uppercase() != method.to_uppercase() {
             return Err(AuthError::MethodMismatch);
         }
-        if payload.b != bucket_id {
+        if payload.bucket_id != bucket_id {
             return Err(AuthError::BucketMismatch);
         }
-        if payload.p != path {
+        if payload.path != path {
             return Err(AuthError::PathMismatch);
         }
 

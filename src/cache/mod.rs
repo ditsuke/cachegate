@@ -12,7 +12,10 @@ pub struct CacheEntry {
 
 impl CacheEntry {
     pub fn new(bytes: Bytes, content_type: Option<String>) -> Self {
-        Self { bytes, content_type }
+        Self {
+            bytes,
+            content_type,
+        }
     }
 }
 

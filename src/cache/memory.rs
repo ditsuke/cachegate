@@ -59,9 +59,10 @@ impl CacheBackend for MemoryCache {
             return None;
         }
 
-        state.lru.get(key).map(|entry| {
-            CacheEntry::new(entry.bytes.clone(), entry.content_type.clone())
-        })
+        state
+            .lru
+            .get(key)
+            .map(|entry| CacheEntry::new(entry.bytes.clone(), entry.content_type.clone()))
     }
 
     async fn put(&self, key: CacheKey, bytes: Bytes, content_type: Option<String>) {
@@ -79,8 +80,7 @@ impl CacheBackend for MemoryCache {
             state.total_bytes = state.total_bytes.saturating_sub(existing.size_bytes);
         }
 
-        let expires_at = OffsetDateTime::now_utc().unix_timestamp()
-            + state.ttl_seconds as i64;
+        let expires_at = OffsetDateTime::now_utc().unix_timestamp() + state.ttl_seconds as i64;
         let entry = MemoryEntry {
             bytes,
             content_type,
@@ -107,5 +107,4 @@ impl CacheBackend for MemoryCache {
             total_bytes: state.total_bytes,
         }
     }
-
 }

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use axum::routing::get;
 use axum::Router;
+use axum::routing::get;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
@@ -15,7 +15,7 @@ mod store;
 
 use auth::AuthState;
 use cache::memory::MemoryCache;
-use config::{apply_env_overrides, Config};
+use config::{Config, apply_env_overrides};
 use handler::AppState;
 use inflight::Inflight;
 use metrics::Metrics;
