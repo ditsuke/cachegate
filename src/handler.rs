@@ -122,8 +122,8 @@ pub async fn get_object(
     let mut response_bytes: Option<usize> = None;
 
     let result = 'request: {
-        if path.is_empty() {
-            break 'request Err(AppError::bad_request("missing object path"));
+        if path.is_empty() || path.contains("..") || path.starts_with('/') {
+            break 'request Err(AppError::bad_request("invalid object path"));
         }
 
         if let Some(entry) = state.cache.get(&key).await {
@@ -344,8 +344,8 @@ pub async fn populate_object(
     let mut response_bytes: Option<usize> = None;
 
     let result = 'request: {
-        if path.is_empty() {
-            break 'request Err(AppError::bad_request("missing object path"));
+        if path.is_empty() || path.contains("..") || path.starts_with('/') {
+            break 'request Err(AppError::bad_request("invalid object path"));
         }
 
         if let Some(entry) = state.cache.get(&key).await {
