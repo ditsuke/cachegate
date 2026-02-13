@@ -1,208 +1,225 @@
+use prometheus::core::Collector;
+use prometheus::{
+    CounterVec, Encoder, HistogramOpts, HistogramVec, IntGauge, Opts, Registry, TextEncoder,
+};
 use serde::Serialize;
-use std::fmt::Write;
-use std::sync::atomic::{AtomicU64, Ordering};
 
-#[derive(Debug)]
-struct Histogram {
-    buckets_ms: Vec<u64>,
-    counts: Vec<AtomicU64>,
-    sum_ms: AtomicU64,
-    count: AtomicU64,
+#[derive(Debug, Clone, Copy)]
+pub enum UpstreamErrorKind {
+    NotFound,
+    PermissionDenied,
+    Unauthenticated,
+    NotSupported,
+    Precondition,
+    Other,
 }
 
-impl Histogram {
-    fn new(mut buckets_ms: Vec<u64>) -> Self {
-        buckets_ms.sort_unstable();
-        buckets_ms.dedup();
-
-        let counts = buckets_ms.iter().map(|_| AtomicU64::new(0)).collect();
-        Self {
-            buckets_ms,
-            counts,
-            sum_ms: AtomicU64::new(0),
-            count: AtomicU64::new(0),
+impl UpstreamErrorKind {
+    pub fn from_store_error(error: &object_store::Error) -> Self {
+        match error {
+            object_store::Error::NotFound { .. } => Self::NotFound,
+            object_store::Error::PermissionDenied { .. } => Self::PermissionDenied,
+            object_store::Error::Unauthenticated { .. } => Self::Unauthenticated,
+            object_store::Error::NotSupported { .. } => Self::NotSupported,
+            object_store::Error::Precondition { .. } => Self::Precondition,
+            _ => Self::Other,
         }
     }
 
-    fn observe(&self, value_ms: u64) {
-        self.count.fetch_add(1, Ordering::Relaxed);
-        self.sum_ms.fetch_add(value_ms, Ordering::Relaxed);
-
-        for (idx, bucket) in self.buckets_ms.iter().enumerate() {
-            if value_ms <= *bucket {
-                self.counts[idx].fetch_add(1, Ordering::Relaxed);
-                return;
-            }
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NotFound => "not_found",
+            Self::PermissionDenied => "permission_denied",
+            Self::Unauthenticated => "unauthenticated",
+            Self::NotSupported => "not_supported",
+            Self::Precondition => "precondition",
+            Self::Other => "other",
         }
     }
-
-    fn snapshot(&self) -> HistogramSnapshot {
-        let mut counts = Vec::with_capacity(self.counts.len());
-        for count in &self.counts {
-            counts.push(count.load(Ordering::Relaxed));
-        }
-        HistogramSnapshot {
-            buckets_ms: self.buckets_ms.clone(),
-            counts,
-            sum_ms: self.sum_ms.load(Ordering::Relaxed),
-            count: self.count.load(Ordering::Relaxed),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-struct HistogramSnapshot {
-    buckets_ms: Vec<u64>,
-    counts: Vec<u64>,
-    sum_ms: u64,
-    count: u64,
 }
 
 #[derive(Debug)]
 pub struct Metrics {
-    requests_total: AtomicU64,
-    auth_fail_total: AtomicU64,
-    cache_hit_total: AtomicU64,
-    cache_miss_total: AtomicU64,
-    upstream_ok_total: AtomicU64,
-    upstream_err_total: AtomicU64,
-    cache_entries: AtomicU64,
-    cache_bytes: AtomicU64,
-    upstream_latency_ms: Histogram,
+    registry: Registry,
+    requests_total: CounterVec,
+    auth_fail_total: CounterVec,
+    cache_hit_total: CounterVec,
+    cache_miss_total: CounterVec,
+    upstream_ok_total: CounterVec,
+    upstream_err_total: CounterVec,
+    cache_entries: IntGauge,
+    cache_bytes: IntGauge,
+    upstream_latency_ms: HistogramVec,
 }
 
 impl Metrics {
     pub fn new() -> Self {
-        let buckets = vec![1, 5, 10, 25, 50, 100, 250, 500, 1000, 2000, 5000];
+        let registry = Registry::new();
+
+        let requests_total = CounterVec::new(
+            Opts::new(
+                "cachegate_requests_total",
+                "Total requests served by cachegate",
+            ),
+            &["method", "status"],
+        )
+        .expect("requests_total metrics");
+        let auth_fail_total = CounterVec::new(
+            Opts::new("cachegate_auth_fail_total", "Total authentication failures"),
+            &["method"],
+        )
+        .expect("auth_fail_total metrics");
+        let cache_hit_total = CounterVec::new(
+            Opts::new("cachegate_cache_hit_total", "Total cache hits"),
+            &["method"],
+        )
+        .expect("cache_hit_total metrics");
+        let cache_miss_total = CounterVec::new(
+            Opts::new("cachegate_cache_miss_total", "Total cache misses"),
+            &["method"],
+        )
+        .expect("cache_miss_total metrics");
+        let upstream_ok_total = CounterVec::new(
+            Opts::new("cachegate_upstream_ok_total", "Total upstream successes"),
+            &["method"],
+        )
+        .expect("upstream_ok_total metrics");
+        let upstream_err_total = CounterVec::new(
+            Opts::new("cachegate_upstream_err_total", "Total upstream errors"),
+            &["method", "error_kind"],
+        )
+        .expect("upstream_err_total metrics");
+        let cache_entries = IntGauge::new("cachegate_cache_entries", "Current cache entry count")
+            .expect("cache_entries metrics");
+        let cache_bytes = IntGauge::new("cachegate_cache_bytes", "Current cache bytes")
+            .expect("cache_bytes metrics");
+
+        let buckets = vec![
+            1.0, 5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2000.0, 5000.0,
+        ];
+        let upstream_latency_ms = HistogramVec::new(
+            HistogramOpts::new(
+                "cachegate_upstream_latency_ms",
+                "Upstream request latency in milliseconds",
+            )
+            .buckets(buckets),
+            &["method"],
+        )
+        .expect("upstream_latency_ms metrics");
+
+        registry
+            .register(Box::new(requests_total.clone()))
+            .expect("register requests_total");
+        registry
+            .register(Box::new(auth_fail_total.clone()))
+            .expect("register auth_fail_total");
+        registry
+            .register(Box::new(cache_hit_total.clone()))
+            .expect("register cache_hit_total");
+        registry
+            .register(Box::new(cache_miss_total.clone()))
+            .expect("register cache_miss_total");
+        registry
+            .register(Box::new(upstream_ok_total.clone()))
+            .expect("register upstream_ok_total");
+        registry
+            .register(Box::new(upstream_err_total.clone()))
+            .expect("register upstream_err_total");
+        registry
+            .register(Box::new(cache_entries.clone()))
+            .expect("register cache_entries");
+        registry
+            .register(Box::new(cache_bytes.clone()))
+            .expect("register cache_bytes");
+        registry
+            .register(Box::new(upstream_latency_ms.clone()))
+            .expect("register upstream_latency_ms");
+
         Self {
-            requests_total: AtomicU64::new(0),
-            auth_fail_total: AtomicU64::new(0),
-            cache_hit_total: AtomicU64::new(0),
-            cache_miss_total: AtomicU64::new(0),
-            upstream_ok_total: AtomicU64::new(0),
-            upstream_err_total: AtomicU64::new(0),
-            cache_entries: AtomicU64::new(0),
-            cache_bytes: AtomicU64::new(0),
-            upstream_latency_ms: Histogram::new(buckets),
+            registry,
+            requests_total,
+            auth_fail_total,
+            cache_hit_total,
+            cache_miss_total,
+            upstream_ok_total,
+            upstream_err_total,
+            cache_entries,
+            cache_bytes,
+            upstream_latency_ms,
         }
     }
 
-    pub fn inc_requests(&self) {
-        self.requests_total.fetch_add(1, Ordering::Relaxed);
+    pub fn inc_requests(&self, method: &str, status: &str) {
+        self.requests_total
+            .with_label_values(&[method, status])
+            .inc();
     }
 
-    pub fn inc_auth_fail(&self) {
-        self.auth_fail_total.fetch_add(1, Ordering::Relaxed);
+    pub fn inc_auth_fail(&self, method: &str) {
+        self.auth_fail_total.with_label_values(&[method]).inc();
     }
 
-    pub fn inc_cache_hit(&self) {
-        self.cache_hit_total.fetch_add(1, Ordering::Relaxed);
+    pub fn inc_cache_hit(&self, method: &str) {
+        self.cache_hit_total.with_label_values(&[method]).inc();
     }
 
-    pub fn inc_cache_miss(&self) {
-        self.cache_miss_total.fetch_add(1, Ordering::Relaxed);
+    pub fn inc_cache_miss(&self, method: &str) {
+        self.cache_miss_total.with_label_values(&[method]).inc();
     }
 
-    pub fn inc_upstream_ok(&self) {
-        self.upstream_ok_total.fetch_add(1, Ordering::Relaxed);
+    pub fn inc_upstream_ok(&self, method: &str) {
+        self.upstream_ok_total.with_label_values(&[method]).inc();
     }
 
-    pub fn inc_upstream_err(&self) {
-        self.upstream_err_total.fetch_add(1, Ordering::Relaxed);
+    pub fn inc_upstream_err(&self, method: &str, error_kind: UpstreamErrorKind) {
+        self.upstream_err_total
+            .with_label_values(&[method, error_kind.as_str()])
+            .inc();
     }
 
-    pub fn observe_upstream_latency_ms(&self, value_ms: u64) {
-        self.upstream_latency_ms.observe(value_ms);
+    pub fn observe_upstream_latency_ms(&self, method: &str, value_ms: u64) {
+        self.upstream_latency_ms
+            .with_label_values(&[method])
+            .observe(value_ms as f64);
     }
 
     pub fn set_cache_stats(&self, entries: usize, bytes: u64) {
-        self.cache_entries.store(entries as u64, Ordering::Relaxed);
-        self.cache_bytes.store(bytes, Ordering::Relaxed);
+        self.cache_entries.set(entries as i64);
+        self.cache_bytes.set(bytes as i64);
     }
 
     pub fn snapshot(&self) -> MetricsSnapshot {
         MetricsSnapshot {
-            requests_total: self.requests_total.load(Ordering::Relaxed),
-            auth_fail_total: self.auth_fail_total.load(Ordering::Relaxed),
-            cache_hit_total: self.cache_hit_total.load(Ordering::Relaxed),
-            cache_miss_total: self.cache_miss_total.load(Ordering::Relaxed),
-            upstream_ok_total: self.upstream_ok_total.load(Ordering::Relaxed),
-            upstream_err_total: self.upstream_err_total.load(Ordering::Relaxed),
-            cache_entries: self.cache_entries.load(Ordering::Relaxed),
-            cache_bytes: self.cache_bytes.load(Ordering::Relaxed),
+            requests_total: sum_counter(&self.requests_total),
+            auth_fail_total: sum_counter(&self.auth_fail_total),
+            cache_hit_total: sum_counter(&self.cache_hit_total),
+            cache_miss_total: sum_counter(&self.cache_miss_total),
+            upstream_ok_total: sum_counter(&self.upstream_ok_total),
+            upstream_err_total: sum_counter(&self.upstream_err_total),
+            cache_entries: self.cache_entries.get() as u64,
+            cache_bytes: self.cache_bytes.get() as u64,
         }
     }
 
     pub fn render_prometheus(&self) -> String {
-        let snapshot = self.snapshot();
-        let histogram = self.upstream_latency_ms.snapshot();
-        let mut out = String::new();
-
-        writeln!(out, "cachegate_requests_total {}", snapshot.requests_total).ok();
-        writeln!(
-            out,
-            "cachegate_auth_fail_total {}",
-            snapshot.auth_fail_total
-        )
-        .ok();
-        writeln!(
-            out,
-            "cachegate_cache_hit_total {}",
-            snapshot.cache_hit_total
-        )
-        .ok();
-        writeln!(
-            out,
-            "cachegate_cache_miss_total {}",
-            snapshot.cache_miss_total
-        )
-        .ok();
-        writeln!(
-            out,
-            "cachegate_upstream_ok_total {}",
-            snapshot.upstream_ok_total
-        )
-        .ok();
-        writeln!(
-            out,
-            "cachegate_upstream_err_total {}",
-            snapshot.upstream_err_total
-        )
-        .ok();
-        writeln!(out, "cachegate_cache_entries {}", snapshot.cache_entries).ok();
-        writeln!(out, "cachegate_cache_bytes {}", snapshot.cache_bytes).ok();
-
-        let mut running = 0u64;
-        for (idx, bucket) in histogram.buckets_ms.iter().enumerate() {
-            running = running.saturating_add(histogram.counts[idx]);
-            writeln!(
-                out,
-                "cachegate_upstream_latency_ms_bucket{{le=\"{}\"}} {}",
-                bucket, running
-            )
-            .ok();
+        let metric_families = self.registry.gather();
+        let mut buffer = Vec::new();
+        let encoder = TextEncoder::new();
+        if encoder.encode(&metric_families, &mut buffer).is_err() {
+            return String::new();
         }
-        writeln!(
-            out,
-            "cachegate_upstream_latency_ms_bucket{{le=\"+Inf\"}} {}",
-            histogram.count
-        )
-        .ok();
-        writeln!(
-            out,
-            "cachegate_upstream_latency_ms_sum {}",
-            histogram.sum_ms
-        )
-        .ok();
-        writeln!(
-            out,
-            "cachegate_upstream_latency_ms_count {}",
-            histogram.count
-        )
-        .ok();
-
-        out
+        String::from_utf8(buffer).unwrap_or_default()
     }
+}
+
+fn sum_counter(counter: &CounterVec) -> u64 {
+    let mut total = 0f64;
+    for family in counter.collect() {
+        for metric in family.get_metric() {
+            total += metric.get_counter().get_value();
+        }
+    }
+    total.round() as u64
 }
 
 #[derive(Debug, Serialize)]

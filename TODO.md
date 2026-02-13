@@ -4,7 +4,7 @@
 
 - [x] Optional sentry instrumentation.
 - [x] Prometheus metrics.
-- [ ] Attributes on certain metrics. Move to using a prometheus lib.
+- [x] Attributes on certain metrics. Move to using a prometheus lib.
 
 ## Performance
 

@@ -16,7 +16,7 @@ use tracing::{info, info_span, warn};
 use crate::auth::{AuthContext, AuthError, AuthMethod, AuthState};
 use crate::cache::{CacheBackend, CacheEntry, CacheKey};
 use crate::inflight::{Inflight, InflightPermit};
-use crate::metrics::Metrics;
+use crate::metrics::{Metrics, UpstreamErrorKind};
 use crate::store::StoreMap;
 
 pub struct AppState {
@@ -85,7 +85,7 @@ pub async fn auth_middleware(
     let auth_method = match auth_method {
         Some(method) => method,
         None => {
-            state.metrics.inc_auth_fail();
+            state.metrics.inc_auth_fail(method.as_str());
             let error = last_error.unwrap_or(AuthError::MissingAuth);
             span.record("status", StatusCode::UNAUTHORIZED.to_string());
             span.record("error", error.to_string());
@@ -110,6 +110,7 @@ pub async fn get_object(
     Extension(auth): Extension<AuthContext>,
 ) -> Result<Response<Body>, AppError> {
     let start = Instant::now();
+    let method = "GET";
     let span = info_span!(
         "get_object",
         bucket_id = %bucket_id,
@@ -123,7 +124,6 @@ pub async fn get_object(
     );
     let _enter = span.enter();
 
-    state.metrics.inc_requests();
     span.record("auth", auth.method.as_str());
     let key = CacheKey::new(bucket_id.clone(), path.clone());
     let mut response_bytes: Option<usize> = None;
@@ -134,14 +134,14 @@ pub async fn get_object(
         }
 
         if let Some(entry) = state.cache.get(&key).await {
-            state.metrics.inc_cache_hit();
+            state.metrics.inc_cache_hit(method);
             span.record("cache", "hit");
             response_bytes = Some(entry.bytes.len());
             info!(bucket_id = %bucket_id, path = %path, bytes = entry.bytes.len(), "served from cache");
             break 'request Ok(build_response(entry, true));
         }
 
-        state.metrics.inc_cache_miss();
+        state.metrics.inc_cache_miss(method);
         span.record("cache", "miss");
         info!(bucket_id = %bucket_id, path = %path, "cache miss");
 
@@ -150,7 +150,7 @@ pub async fn get_object(
             InflightPermit::Leader(notify) => {
                 span.record("inflight", "leader");
                 info!(bucket_id = %bucket_id, path = %path, "inflight leader fetch");
-                let result = fetch_and_cache_entry(&state, &key, &bucket_id, &path)
+                let result = fetch_and_cache_entry(&state, &key, &bucket_id, &path, method)
                     .await
                     .map(|entry| {
                         response_bytes = Some(entry.bytes.len());
@@ -168,7 +168,7 @@ pub async fn get_object(
                     info!(bucket_id = %bucket_id, path = %path, bytes = entry.bytes.len(), "served from cache after inflight");
                     break 'request Ok(build_response(entry, true));
                 }
-                break 'request fetch_and_cache_entry(&state, &key, &bucket_id, &path)
+                break 'request fetch_and_cache_entry(&state, &key, &bucket_id, &path, method)
                     .await
                     .map(|entry| {
                         response_bytes = Some(entry.bytes.len());
@@ -179,18 +179,21 @@ pub async fn get_object(
     };
 
     span.record("elapsed_ms", start.elapsed().as_millis().to_string());
-    match &result {
+    let status_label = match &result {
         Ok(response) => {
             span.record("status", response.status().to_string());
             if let Some(bytes) = response_bytes {
                 span.record("bytes", bytes.to_string());
             }
+            response.status().as_u16().to_string()
         }
         Err(err) => {
             span.record("status", err.status.to_string());
             span.record("bytes", "0");
+            err.status.as_u16().to_string()
         }
-    }
+    };
+    state.metrics.inc_requests(method, status_label.as_str());
 
     result
 }
@@ -202,6 +205,7 @@ pub async fn head_object(
     Extension(auth): Extension<AuthContext>,
 ) -> Result<Response<Body>, AppError> {
     let start = Instant::now();
+    let method = "HEAD";
     let span = info_span!(
         "head_object",
         bucket_id = %bucket_id,
@@ -215,7 +219,6 @@ pub async fn head_object(
     );
     let _enter = span.enter();
 
-    state.metrics.inc_requests();
     span.record("auth", auth.method.as_str());
     let key = CacheKey::new(bucket_id.clone(), path.clone());
     let prefetch_enabled = parse_prefetch(&params);
@@ -227,14 +230,14 @@ pub async fn head_object(
         }
 
         if let Some(entry) = state.cache.get(&key).await {
-            state.metrics.inc_cache_hit();
+            state.metrics.inc_cache_hit(method);
             span.record("cache", "hit");
             response_bytes = Some(entry.bytes.len());
             info!(bucket_id = %bucket_id, path = %path, bytes = entry.bytes.len(), "head served from cache");
             break 'request Ok(build_head_response(entry));
         }
 
-        state.metrics.inc_cache_miss();
+        state.metrics.inc_cache_miss(method);
         span.record("cache", "miss");
         info!(bucket_id = %bucket_id, path = %path, "head cache miss");
 
@@ -254,15 +257,16 @@ pub async fn head_object(
             Ok(meta) => {
                 state
                     .metrics
-                    .observe_upstream_latency_ms(head_start.elapsed().as_millis() as u64);
-                state.metrics.inc_upstream_ok();
+                    .observe_upstream_latency_ms(method, head_start.elapsed().as_millis() as u64);
+                state.metrics.inc_upstream_ok(method);
                 meta
             }
             Err(err) => {
+                let error_kind = UpstreamErrorKind::from_store_error(&err);
                 state
                     .metrics
-                    .observe_upstream_latency_ms(head_start.elapsed().as_millis() as u64);
-                state.metrics.inc_upstream_err();
+                    .observe_upstream_latency_ms(method, head_start.elapsed().as_millis() as u64);
+                state.metrics.inc_upstream_err(method, error_kind);
                 warn!(
                     bucket_id = %bucket_id,
                     path = %path,
@@ -289,18 +293,21 @@ pub async fn head_object(
     };
 
     span.record("elapsed_ms", start.elapsed().as_millis().to_string());
-    match &result {
+    let status_label = match &result {
         Ok(response) => {
             span.record("status", response.status().to_string());
             if let Some(bytes) = response_bytes {
                 span.record("bytes", bytes.to_string());
             }
+            response.status().as_u16().to_string()
         }
         Err(err) => {
             span.record("status", err.status.to_string());
             span.record("bytes", "0");
+            err.status.as_u16().to_string()
         }
-    }
+    };
+    state.metrics.inc_requests(method, status_label.as_str());
 
     result
 }
@@ -310,6 +317,7 @@ async fn fetch_and_cache_entry(
     key: &CacheKey,
     bucket_id: &str,
     path: &str,
+    method: &str,
 ) -> Result<CacheEntry, AppError> {
     let store = state.stores.get(bucket_id).ok_or_else(|| {
         warn!(bucket_id = %bucket_id, path = %path, "unknown bucket");
@@ -322,10 +330,11 @@ async fn fetch_and_cache_entry(
     let result = match store.get(&location).await {
         Ok(result) => result,
         Err(err) => {
+            let error_kind = UpstreamErrorKind::from_store_error(&err);
             state
                 .metrics
-                .observe_upstream_latency_ms(start.elapsed().as_millis() as u64);
-            state.metrics.inc_upstream_err();
+                .observe_upstream_latency_ms(method, start.elapsed().as_millis() as u64);
+            state.metrics.inc_upstream_err(method, error_kind);
             warn!(
                 bucket_id = %bucket_id,
                 path = %path,
@@ -340,10 +349,11 @@ async fn fetch_and_cache_entry(
     let bytes = match result.bytes().await {
         Ok(bytes) => bytes,
         Err(err) => {
+            let error_kind = UpstreamErrorKind::from_store_error(&err);
             state
                 .metrics
-                .observe_upstream_latency_ms(start.elapsed().as_millis() as u64);
-            state.metrics.inc_upstream_err();
+                .observe_upstream_latency_ms(method, start.elapsed().as_millis() as u64);
+            state.metrics.inc_upstream_err(method, error_kind);
             warn!(
                 bucket_id = %bucket_id,
                 path = %path,
@@ -357,8 +367,8 @@ async fn fetch_and_cache_entry(
 
     state
         .metrics
-        .observe_upstream_latency_ms(start.elapsed().as_millis() as u64);
-    state.metrics.inc_upstream_ok();
+        .observe_upstream_latency_ms(method, start.elapsed().as_millis() as u64);
+    state.metrics.inc_upstream_ok(method);
 
     let content_type = Some(resolve_content_type(path, &bytes));
     let elapsed_ms = start.elapsed().as_millis();
@@ -547,7 +557,7 @@ fn spawn_head_prefetch(state: Arc<AppState>, key: CacheKey, bucket_id: String, p
             InflightPermit::Leader(notify) => {
                 span.record("inflight", "leader");
                 info!(bucket_id = %bucket_id, path = %path, "head prefetch leader fetch");
-                let result = fetch_and_cache_entry(&state, &key, &bucket_id, &path).await;
+                let result = fetch_and_cache_entry(&state, &key, &bucket_id, &path, "HEAD").await;
                 match &result {
                     Ok(entry) => {
                         span.record("status", "ok");

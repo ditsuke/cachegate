@@ -181,7 +181,7 @@ cargo test
 
 `GET /stats` returns JSON counters and cache size.
 
-`GET /metrics` returns Prometheus text with counters and an upstream latency histogram.
+`GET /metrics` returns Prometheus metrics.
 
 Optional Sentry instrumentation is enabled by setting `sentry.dsn` in config. Tracing is controlled by `sentry.traces_sample_rate`.
 

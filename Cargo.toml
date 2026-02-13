@@ -17,6 +17,7 @@ infer = "0.19"
 lru = "^0.16"
 mime_guess = "2"
 object_store = { version = "0.13", features = ["aws", "azure"] }
+prometheus = "0.13"
 rand = "0.8"
 sentry = "^0.46"
 sentry-tower = "^0.46"
