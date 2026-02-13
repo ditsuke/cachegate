@@ -33,7 +33,7 @@ impl MemoryCache {
         let state = CacheState {
             lru,
             total_bytes: 0,
-            max_bytes: policy.max_bytes,
+            max_bytes: policy.max_bytes_memory,
             ttl_seconds: policy.ttl_seconds,
         };
 

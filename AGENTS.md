@@ -9,7 +9,7 @@ Project context and workflow guidance for AI-assisted development in Cachegate.
 **Core behaviors:**
 
 - Presigned URL or bearer-token auth for `GET` and `HEAD`.
-- In-memory LRU cache with TTL and max-bytes policy.
+- Hybrid disk-memory LRU cache (Foyer) with TTL and max-bytes policy.
 - Singleflight on cache misses to avoid thundering herd.
 - `/stats` JSON and `/metrics` Prometheus endpoints.
 - Optional Sentry tracing.
@@ -41,7 +41,7 @@ Auth is required for `GET`/`HEAD` on object routes. Accepts presigned URL or bea
 - tracing + tracing_subscriber for structured logging
 - anyhow for error handling with context
 - object_store for S3/Azure backends
-- LRU cache via lru crate
+- Hybrid cache via the foyer crate
 
 ## Project Structure
 
@@ -53,6 +53,7 @@ src/handler.rs        # Request handlers and middleware
 src/auth.rs           # Presigned and bearer auth
 src/cache/mod.rs      # Cache interface/types
 src/cache/memory.rs   # In-memory LRU cache
+src/cache/foyer.rs    # Hybrid disk-memory cache (Foyer)
 src/store/mod.rs      # Store registry (S3/Azure)
 src/store/azure.rs    # Azure store builder
 src/metrics.rs        # Prometheus metrics

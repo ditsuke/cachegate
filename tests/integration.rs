@@ -88,7 +88,7 @@ auth:
 
 cache:
   ttl_seconds: 60
-  max_bytes: 10485760
+  max_bytes_memory: 10485760
 
 stores:
   minio-test:

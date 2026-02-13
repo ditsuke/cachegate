@@ -19,10 +19,10 @@ use crate::inflight::{Inflight, InflightPermit};
 use crate::metrics::{Metrics, UpstreamErrorKind};
 use crate::store::StoreMap;
 
-pub struct AppState {
+pub struct AppState<C: CacheBackend> {
     pub stores: StoreMap,
     pub auth: AuthState,
-    pub cache: Arc<dyn CacheBackend>,
+    pub cache: Arc<C>,
     pub inflight: Arc<Inflight>,
     pub metrics: Arc<Metrics>,
 }
@@ -33,8 +33,8 @@ pub(crate) struct PathParams {
     path: String,
 }
 
-pub async fn auth_middleware(
-    State(state): State<Arc<AppState>>,
+pub async fn auth_middleware<C: CacheBackend + 'static>(
+    State(state): State<Arc<AppState<C>>>,
     request: Request<Body>,
     next: Next,
 ) -> Result<Response<Body>, AppError> {
@@ -104,8 +104,8 @@ pub async fn auth_middleware(
     Ok(next.run(request).await)
 }
 
-pub async fn get_object(
-    State(state): State<Arc<AppState>>,
+pub async fn get_object<C: CacheBackend + 'static>(
+    State(state): State<Arc<AppState<C>>>,
     Path(PathParams { bucket_id, path }): Path<PathParams>,
     Extension(auth): Extension<AuthContext>,
 ) -> Result<Response<Body>, AppError> {
@@ -198,8 +198,8 @@ pub async fn get_object(
     result
 }
 
-pub async fn head_object(
-    State(state): State<Arc<AppState>>,
+pub async fn head_object<C: CacheBackend + 'static>(
+    State(state): State<Arc<AppState<C>>>,
     Path(PathParams { bucket_id, path }): Path<PathParams>,
     Query(params): Query<HashMap<String, String>>,
     Extension(auth): Extension<AuthContext>,
@@ -312,8 +312,8 @@ pub async fn head_object(
     result
 }
 
-async fn fetch_and_cache_entry(
-    state: &AppState,
+async fn fetch_and_cache_entry<C: CacheBackend>(
+    state: &AppState<C>,
     key: &CacheKey,
     bucket_id: &str,
     path: &str,
@@ -419,7 +419,9 @@ pub struct CacheStatsResponse {
     bytes: u64,
 }
 
-pub async fn stats(State(state): State<Arc<AppState>>) -> Result<Json<StatsResponse>, AppError> {
+pub async fn stats<C: CacheBackend + 'static>(
+    State(state): State<Arc<AppState<C>>>,
+) -> Result<Json<StatsResponse>, AppError> {
     let cache_stats = state.cache.stats().await;
     state
         .metrics
@@ -446,7 +448,9 @@ pub async fn health() -> Result<Response<Body>, AppError> {
     Ok(response)
 }
 
-pub async fn metrics(State(state): State<Arc<AppState>>) -> Result<Response<Body>, AppError> {
+pub async fn metrics<C: CacheBackend + 'static>(
+    State(state): State<Arc<AppState<C>>>,
+) -> Result<Response<Body>, AppError> {
     let cache_stats = state.cache.stats().await;
     state
         .metrics
@@ -539,7 +543,12 @@ fn parse_prefetch_value(value: &str) -> Option<bool> {
     }
 }
 
-fn spawn_head_prefetch(state: Arc<AppState>, key: CacheKey, bucket_id: String, path: String) {
+fn spawn_head_prefetch<C: CacheBackend + 'static>(
+    state: Arc<AppState<C>>,
+    key: CacheKey,
+    bucket_id: String,
+    path: String,
+) {
     // May be dropped, but that's okay.
     tokio::spawn(async move {
         let span = info_span!(

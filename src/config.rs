@@ -23,7 +23,11 @@ pub struct AuthConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct CachePolicy {
     pub ttl_seconds: u64,
-    pub max_bytes: u64,
+    pub max_bytes_memory: u64,
+    #[serde(default)]
+    pub disk_capacity_bytes: Option<u64>,
+    #[serde(default)]
+    pub disk_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

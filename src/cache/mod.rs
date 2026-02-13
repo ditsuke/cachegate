@@ -1,10 +1,14 @@
 use async_trait::async_trait;
 use bytes::Bytes;
+use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
 
+pub mod foyer;
 pub mod memory;
 
-#[derive(Debug, Clone)]
+pub use memory::MemoryCache;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CacheEntry {
     pub bytes: Bytes,
     pub content_type: Option<String>,
@@ -19,7 +23,7 @@ impl CacheEntry {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CacheKey {
     pub bucket_id: String,
     pub path: String,
