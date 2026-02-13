@@ -1,3 +1,4 @@
+use sentry::types::Dsn;
 use std::sync::Arc;
 use tracing_error::ErrorLayer;
 use tracing_subscriber::fmt;
@@ -177,8 +178,7 @@ async fn async_main(config: Config) -> anyhow::Result<()> {
 
 fn init_sentry(config: &Config) -> Option<sentry::ClientInitGuard> {
     let sentry_config = config.sentry.as_ref()?;
-    let dsn = sentry_config.dsn.as_deref()?;
-    let dsn = dsn.parse().ok()?;
+    let dsn = sentry_config.dsn.parse::<Dsn>().expect("Bad sentry DSN");
 
     let options = sentry::ClientOptions {
         dsn: Some(dsn),
@@ -186,7 +186,7 @@ fn init_sentry(config: &Config) -> Option<sentry::ClientInitGuard> {
             .environment
             .clone()
             .map(std::borrow::Cow::from),
-        release: sentry_config.release.clone().map(std::borrow::Cow::from),
+        release: sentry::release_name!(),
         traces_sample_rate: sentry_config.traces_sample_rate.unwrap_or(0.1),
         debug: sentry_config.debug.unwrap_or(false),
         ..Default::default()

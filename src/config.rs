@@ -28,9 +28,8 @@ pub struct CachePolicy {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SentryConfig {
-    pub dsn: Option<String>,
+    pub dsn: String,
     pub environment: Option<String>,
-    pub release: Option<String>,
     pub traces_sample_rate: Option<f32>,
     pub debug: Option<bool>,
 }
