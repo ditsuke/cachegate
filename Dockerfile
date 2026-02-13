@@ -33,5 +33,8 @@ WORKDIR /app
 
 EXPOSE 8080
 
+ENV RUST_BACKTRACE=1 \
+    RUST_LOG=INFO
+
 ENTRYPOINT ["cachegate"]
 CMD ["--config", "env"]
