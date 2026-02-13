@@ -49,9 +49,8 @@ pub enum StoreConfig {
     },
     #[serde(rename = "azure")]
     Azure {
-        account: String,
         container: String,
-        access_key: String,
+        connection_string: String,
     },
 }
 

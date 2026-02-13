@@ -3,7 +3,8 @@ use std::sync::Arc;
 
 use object_store::ObjectStore;
 use object_store::aws::AmazonS3Builder;
-use object_store::azure::MicrosoftAzureBuilder;
+
+mod azure;
 
 use crate::config::StoreConfig;
 
@@ -38,16 +39,9 @@ pub fn build_stores(configs: &HashMap<String, StoreConfig>) -> anyhow::Result<St
                 Arc::new(builder.build()?)
             }
             StoreConfig::Azure {
-                account,
                 container,
-                access_key,
-            } => {
-                let builder = MicrosoftAzureBuilder::new()
-                    .with_account(account)
-                    .with_access_key(access_key)
-                    .with_container_name(container);
-                Arc::new(builder.build()?)
-            }
+                connection_string,
+            } => azure::build_azure_store(id, container, connection_string)?,
         };
 
         stores.insert(id.clone(), store);

@@ -64,9 +64,8 @@ stores:
     allow_http: false
   assets-azure:
     type: azure
-    account: "my-account"
     container: "assets"
-    access_key: "..."
+    connection_string: "DefaultEndpointsProtocol=https;AccountName=my-account;AccountKey=...;EndpointSuffix=core.windows.net"
 ```
 
 ## Presigned auth
@@ -123,6 +122,11 @@ CACHEGATE__STORES__minio__access_key=minioadmin
 CACHEGATE__STORES__minio__secret_key=minioadmin
 CACHEGATE__STORES__minio__region=us-east-1
 CACHEGATE__STORES__minio__bucket=cachegate
+
+# Azure via connection string
+CACHEGATE__STORES__assets__type=azure
+CACHEGATE__STORES__assets__container=assets
+CACHEGATE__STORES__assets__CONNECTION_STRING="DefaultEndpointsProtocol=https;AccountName=my-account;AccountKey=...;EndpointSuffix=core.windows.net"
 
 CACHEGATE__AUTH__PUBLIC_KEY=PfIG9MO7yrSFq4DNs7GPFC4CticILjGtqpoh43p3ipE
 CACHEGATE__AUTH__PRIVATE_KEY=NC7y4q2_rmnWBhlnEo34B9FddA0DkGlu7XGOs76bZn8
