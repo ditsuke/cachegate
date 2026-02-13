@@ -422,12 +422,8 @@ pub struct CacheStatsResponse {
 pub async fn stats<C: CacheBackend + 'static>(
     State(state): State<Arc<AppState<C>>>,
 ) -> Result<Json<StatsResponse>, AppError> {
-    let cache_stats = state.cache.stats().await;
-    state
-        .metrics
-        .set_cache_stats(cache_stats.entries, cache_stats.total_bytes);
-
     let snapshot = state.metrics.snapshot();
+    let cache_stats = state.cache.stats().await;
     Ok(Json(StatsResponse {
         requests_total: snapshot.requests_total,
         auth_fail_total: snapshot.auth_fail_total,
@@ -436,8 +432,8 @@ pub async fn stats<C: CacheBackend + 'static>(
         upstream_ok_total: snapshot.upstream_ok_total,
         upstream_err_total: snapshot.upstream_err_total,
         cache: CacheStatsResponse {
-            entries: snapshot.cache_entries,
-            bytes: snapshot.cache_bytes,
+            entries: cache_stats.inserts,
+            bytes: 0,
         },
     }))
 }
@@ -451,10 +447,7 @@ pub async fn health() -> Result<Response<Body>, AppError> {
 pub async fn metrics<C: CacheBackend + 'static>(
     State(state): State<Arc<AppState<C>>>,
 ) -> Result<Response<Body>, AppError> {
-    let cache_stats = state.cache.stats().await;
-    state
-        .metrics
-        .set_cache_stats(cache_stats.entries, cache_stats.total_bytes);
+    let _cache_stats = state.cache.stats().await;
     let body = state.metrics.render_prometheus();
     let mut response = Response::new(Body::from(body));
     response.headers_mut().insert(

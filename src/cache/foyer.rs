@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use foyer::{DirectFsDeviceOptions, Engine, HybridCache, HybridCacheBuilder};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{info, warn};
 
 use crate::cache::{CacheBackend, CacheEntry as CacheEntryInner, CacheKey, CacheStats};
@@ -13,7 +14,7 @@ type FoyerHybridCache = HybridCache<CacheKey, CacheEntryInner>;
 pub struct FoyerCache {
     cache: FoyerHybridCache,
     ttl_seconds: u64,
-    max_bytes: u64,
+    inserts: AtomicU64,
 }
 
 impl FoyerCache {
@@ -58,7 +59,7 @@ impl FoyerCache {
         Ok(Self {
             cache,
             ttl_seconds: policy.ttl_seconds,
-            max_bytes: max_bytes_memory,
+            inserts: AtomicU64::new(0),
         })
     }
 }
@@ -88,13 +89,113 @@ impl CacheBackend for FoyerCache {
 
         let entry = CacheEntryInner::new(bytes, content_type);
         self.cache.insert(key, entry);
+        self.inserts.fetch_add(1, Ordering::Relaxed);
     }
 
     #[tracing::instrument(skip(self))]
     async fn stats(&self) -> CacheStats {
         CacheStats {
-            entries: 0,
-            total_bytes: self.max_bytes,
+            inserts: self.inserts.load(Ordering::Relaxed),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bytes::Bytes;
+    use bytesize::ByteSize;
+    use tempfile::TempDir;
+
+    use super::*;
+    use crate::cache::{CacheBackend, CacheKey};
+
+    fn make_policy(
+        ttl_seconds: u64,
+        max_memory_bytes: u64,
+        max_disk_bytes: u64,
+        disk_path: Option<String>,
+    ) -> CachePolicy {
+        CachePolicy {
+            ttl_seconds,
+            max_memory: ByteSize(max_memory_bytes),
+            max_disk: ByteSize(max_disk_bytes),
+            disk_path,
+        }
+    }
+
+    #[tokio::test]
+    async fn new_rejects_zero_max_memory() {
+        let policy = make_policy(60, 0, 1024 * 1024, None);
+        let result = FoyerCache::new(policy).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn new_rejects_zero_ttl() {
+        let policy = make_policy(0, 1024 * 1024, 1024 * 1024, None);
+        let result = FoyerCache::new(policy).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn new_rejects_zero_max_disk() {
+        let policy = make_policy(60, 1024 * 1024, 0, None);
+        let result = FoyerCache::new(policy).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn new_succeeds_with_valid_policy() {
+        let disk_dir = TempDir::new().unwrap();
+        let policy = make_policy(
+            60,
+            1024 * 1024,
+            1024 * 1024,
+            Some(disk_dir.path().to_string_lossy().to_string()),
+        );
+        let result = FoyerCache::new(policy).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn get_returns_none_for_missing_key() {
+        let disk_dir = TempDir::new().unwrap();
+        let policy = make_policy(
+            60,
+            1024 * 1024,
+            1024 * 1024,
+            Some(disk_dir.path().to_string_lossy().to_string()),
+        );
+        let cache = FoyerCache::new(policy).await.unwrap();
+
+        let key = CacheKey::new("bucket".to_string(), "nonexistent.txt".to_string());
+        let result = cache.get(&key).await;
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn put_and_get_roundtrip() {
+        let disk_dir = TempDir::new().unwrap();
+        let policy = make_policy(
+            60,
+            1024 * 1024,
+            1024 * 1024,
+            Some(disk_dir.path().to_string_lossy().to_string()),
+        );
+        let cache = FoyerCache::new(policy).await.unwrap();
+
+        let key = CacheKey::new("bucket".to_string(), "test.txt".to_string());
+        let data = Bytes::from(b"hello world".to_vec());
+        let content_type = Some("text/plain".to_string());
+
+        cache
+            .put(key.clone(), data.clone(), content_type.clone())
+            .await;
+
+        let result = cache.get(&key).await;
+        assert!(result.is_some());
+        let entry = result.unwrap();
+        assert_eq!(entry.bytes, data);
+        assert_eq!(entry.content_type, content_type);
     }
 }

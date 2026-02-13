@@ -30,9 +30,9 @@ pub struct CacheKey {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct CacheStats {
-    pub entries: usize,
-    pub total_bytes: u64,
+    pub inserts: u64,
 }
 
 impl CacheKey {

@@ -1,10 +1,15 @@
 # TODOs
 
+## Fixes
+
+- [ ] TTL is a no-op on foyer. Remove it.
+
 ## Observability
 
 - [x] Optional sentry instrumentation.
 - [x] Prometheus metrics.
 - [x] Attributes on certain metrics. Move to using a prometheus lib.
+- [ ] Wire up foyer metrics with `mixtricks`
 
 ## Performance
 
@@ -21,7 +26,7 @@ are split in some environments, like in kubernetes with configmaps and secrets.
 
 ## Scaling
 
-- [ ] Hybrid in-memory + disk cache. In-memory is faster but more expensive, so we can use it for hot objects and fall back to disk for less popular ones. This will allow us to scale the cache beyond available memory while still on a single node. We can use [foyer](https://github.com/foyer-rs/foyer) as the backbone.
+- [x] Hybrid in-memory + disk cache. In-memory is faster but more expensive, so we can use it for hot objects and fall back to disk for less popular ones. This will allow us to scale the cache beyond available memory while still on a single node. We can use [foyer](https://github.com/foyer-rs/foyer) as the backbone.
 - [ ] Gateway node
     If a single node is unable to handle workload, we'll want to scale it out. At that point to maintain
     cache hits we'll want consistent-ish routing of requests to available nodes.

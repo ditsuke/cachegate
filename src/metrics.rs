@@ -183,11 +183,6 @@ impl Metrics {
             .observe(value_ms as f64);
     }
 
-    pub fn set_cache_stats(&self, entries: usize, bytes: u64) {
-        self.cache_entries.set(entries as i64);
-        self.cache_bytes.set(bytes as i64);
-    }
-
     pub fn snapshot(&self) -> MetricsSnapshot {
         MetricsSnapshot {
             requests_total: sum_counter(&self.requests_total),

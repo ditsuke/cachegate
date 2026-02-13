@@ -12,6 +12,7 @@ use std::io::Write;
 use std::net::TcpListener;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tempfile::tempdir;
 
 const MINIO_ENDPOINT: &str = "http://127.0.0.1:9305";
 const MINIO_ACCESS_KEY: &str = "minioadmin";
@@ -29,16 +30,20 @@ struct PresignPayload {
 }
 
 #[derive(Deserialize)]
+#[allow(dead_code)]
 struct StatsResponse {
+    requests_total: u64,
+    auth_fail_total: u64,
     cache_hit_total: u64,
     cache_miss_total: u64,
+    upstream_ok_total: u64,
+    upstream_err_total: u64,
     cache: CacheStatsResponse,
 }
 
 #[derive(Deserialize)]
 struct CacheStatsResponse {
     entries: u64,
-    bytes: u64,
 }
 
 struct ChildGuard {
@@ -78,6 +83,9 @@ async fn live_minio_readthrough() {
     let port = free_port();
     let listen = format!("127.0.0.1:{port}");
     let mut config_file = tempfile::NamedTempFile::new().expect("temp config");
+    let temp_disk = tempdir().expect("temp cache dir");
+
+    let temp_disk_path = temp_disk.path().display();
     let config_body = format!(
         r#"listen: "{listen}"
 
@@ -89,6 +97,8 @@ auth:
 cache:
   ttl_seconds: 60
   max_memory: 10MB
+  max_disk: 15MiB
+  disk_path: {temp_disk_path}
 
 stores:
   minio-test:
@@ -273,7 +283,6 @@ stores:
     assert!(stats.cache_hit_total >= 1);
     assert!(stats.cache_miss_total >= 1);
     assert!(stats.cache.entries >= 1);
-    assert!(stats.cache.bytes >= payload.len() as u64);
 
     let mut bad_sig = sig.clone();
     bad_sig.pop();
@@ -383,7 +392,7 @@ async fn wait_for_ready(base_url: &str) {
     let client = reqwest::Client::new();
     let mut last_error = None;
     for _ in 0..50 {
-        match client.get(format!("{base_url}/stats")).send().await {
+        match client.get(format!("{base_url}/health")).send().await {
             Ok(resp) if resp.status().is_success() => return,
             Ok(resp) => last_error = Some(format!("status {}", resp.status())),
             Err(err) => last_error = Some(err.to_string()),
