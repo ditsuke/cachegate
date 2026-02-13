@@ -1,4 +1,5 @@
 use anyhow::Context;
+use bytesize::ByteSize;
 use serde::Deserialize;
 use std::collections::HashMap;
 
@@ -23,9 +24,11 @@ pub struct AuthConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct CachePolicy {
     pub ttl_seconds: u64,
-    pub max_bytes_memory: u64,
+    #[serde(with = "bytesize_serde")]
+    pub max_memory: ByteSize,
     #[serde(default)]
-    pub disk_capacity_bytes: Option<u64>,
+    #[serde(with = "bytesize_serde")]
+    pub max_disk: ByteSize,
     #[serde(default)]
     pub disk_path: Option<String>,
 }

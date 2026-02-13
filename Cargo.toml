@@ -9,6 +9,8 @@ async-trait = "0.1"
 axum = "^0.8"
 base64 = "0.22"
 bytes = { version = "1", features = ["serde"] }
+bytesize = "1"
+bytesize-serde = "0.1"
 clap = { version = "4", features = ["derive"] }
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 envious = "0.2.2"

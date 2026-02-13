@@ -147,7 +147,7 @@ async fn async_main(config: Config) -> anyhow::Result<()> {
     let stores = build_stores(&config.stores).context("failed to build stores")?;
 
     // Use Foyer hybrid cache if disk config provided, otherwise MemoryCache
-    if config.cache.disk_capacity_bytes.is_some() || config.cache.disk_path.is_some() {
+    if config.cache.max_disk.as_u64() > 0 || config.cache.disk_path.is_some() {
         let state = AppState::<FoyerCache> {
             stores,
             auth,

@@ -30,10 +30,11 @@ pub struct MemoryCache {
 impl MemoryCache {
     pub fn new(policy: CachePolicy) -> Self {
         let lru = LruCache::unbounded();
+        let max_bytes = policy.max_memory.as_u64();
         let state = CacheState {
             lru,
             total_bytes: 0,
-            max_bytes: policy.max_bytes_memory,
+            max_bytes,
             ttl_seconds: policy.ttl_seconds,
         };
 

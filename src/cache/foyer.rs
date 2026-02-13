@@ -18,17 +18,20 @@ pub struct FoyerCache {
 
 impl FoyerCache {
     pub async fn new(policy: CachePolicy) -> Result<FoyerCache, anyhow::Error> {
-        if policy.max_bytes_memory == 0 || policy.ttl_seconds == 0 {
+        let max_bytes_memory = policy.max_memory.as_u64();
+        if max_bytes_memory == 0 || policy.ttl_seconds == 0 {
             return Err(anyhow!("Bad policy: 0 max_bytes_memory/ttl_seconds"));
         }
 
-        let disk_capacity = policy
-            .disk_capacity_bytes
-            .unwrap_or(policy.max_bytes_memory * 10);
+        let disk_capacity = policy.max_disk.as_u64();
         let disk_path = policy
             .disk_path
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("/tmp/cachegate_cache"));
+
+        if disk_capacity == 0 {
+            return Err(anyhow!("max_disk must be > 0 when using Foyer cache"));
+        }
 
         std::fs::create_dir_all(&disk_path).context("failed to create disk cache directory")?;
 
@@ -37,7 +40,7 @@ impl FoyerCache {
 
         let cache = HybridCacheBuilder::new()
             .with_name("cachegate")
-            .memory(policy.max_bytes_memory as usize)
+            .memory(max_bytes_memory as usize)
             .storage(Engine::Large)
             .with_device_options(device_options)
             .build()
@@ -45,7 +48,7 @@ impl FoyerCache {
             .context("Failed to initialise cache")?;
 
         info!(
-            memory_capacity_bytes = policy.max_bytes_memory,
+            memory_capacity_bytes = max_bytes_memory,
             disk_capacity_bytes = disk_capacity,
             disk_path = %disk_path.display(),
             ttl_seconds = policy.ttl_seconds,
@@ -55,7 +58,7 @@ impl FoyerCache {
         Ok(Self {
             cache,
             ttl_seconds: policy.ttl_seconds,
-            max_bytes: policy.max_bytes_memory,
+            max_bytes: max_bytes_memory,
         })
     }
 }
