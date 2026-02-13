@@ -9,7 +9,7 @@ use axum::middleware::Next;
 use axum::response::IntoResponse;
 use bytes::Bytes;
 use object_store::ObjectStoreExt;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::time::Instant;
 use tracing::{info, info_span, warn};
 
@@ -27,15 +27,22 @@ pub struct AppState {
     pub metrics: Arc<Metrics>,
 }
 
+#[derive(Debug, Deserialize)]
+pub(crate) struct PathParams {
+    bucket_id: String,
+    path: String,
+}
+
 pub async fn auth_middleware(
     State(state): State<Arc<AppState>>,
     request: Request<Body>,
     next: Next,
 ) -> Result<Response<Body>, AppError> {
     let (mut parts, body) = request.into_parts();
-    let Path((bucket_id, path)) = Path::<(String, String)>::from_request_parts(&mut parts, &state)
-        .await
-        .map_err(|_| AppError::bad_request("invalid path"))?;
+    let Path(PathParams { bucket_id, path }) =
+        Path::<PathParams>::from_request_parts(&mut parts, &state)
+            .await
+            .map_err(|_| AppError::bad_request("invalid path"))?;
 
     let Query(params) = Query::<HashMap<String, String>>::from_request_parts(&mut parts, &state)
         .await
@@ -99,7 +106,7 @@ pub async fn auth_middleware(
 
 pub async fn get_object(
     State(state): State<Arc<AppState>>,
-    Path((bucket_id, path)): Path<(String, String)>,
+    Path(PathParams { bucket_id, path }): Path<PathParams>,
     Extension(auth): Extension<AuthContext>,
 ) -> Result<Response<Body>, AppError> {
     let start = Instant::now();
@@ -190,7 +197,7 @@ pub async fn get_object(
 
 pub async fn head_object(
     State(state): State<Arc<AppState>>,
-    Path((bucket_id, path)): Path<(String, String)>,
+    Path(PathParams { bucket_id, path }): Path<PathParams>,
     Query(params): Query<HashMap<String, String>>,
     Extension(auth): Extension<AuthContext>,
 ) -> Result<Response<Body>, AppError> {
