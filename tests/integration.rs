@@ -13,7 +13,7 @@ use std::net::TcpListener;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-const MINIO_ENDPOINT: &str = "http://127.0.0.1:9000";
+const MINIO_ENDPOINT: &str = "http://127.0.0.1:9305";
 const MINIO_ACCESS_KEY: &str = "minioadmin";
 const MINIO_SECRET_KEY: &str = "minioadmin";
 const MINIO_REGION: &str = "us-east-1";

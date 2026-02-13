@@ -117,7 +117,7 @@ CACHEGATE_CONFIG="$(cat config.yaml)" # Config-yaml as a single env var
 CACHEGATE__LISTEN=localhost:9010
 
 CACHEGATE__STORES__minio__type=s3
-CACHEGATE__STORES__minio__endpoint=localhost:9000
+CACHEGATE__STORES__minio__endpoint=localhost:9305
 CACHEGATE__STORES__minio__access_key=minioadmin
 CACHEGATE__STORES__minio__secret_key=minioadmin
 CACHEGATE__STORES__minio__region=us-east-1

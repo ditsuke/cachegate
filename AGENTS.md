@@ -7,6 +7,7 @@ Project context and workflow guidance for AI-assisted development in Cachegate.
 **Cachegate** is a minimal read-only proxy for S3 and Azure Blob Storage.
 
 **Core behaviors:**
+
 - Presigned URL or bearer-token auth for `GET` and `HEAD`.
 - In-memory LRU cache with TTL and max-bytes policy.
 - Singleflight on cache misses to avoid thundering herd.
@@ -79,7 +80,7 @@ cargo test
 ## Testing Notes
 
 - `cargo nextest run` runs unit/integration tests (integration requires MinIO).
-- If MinIO is not reachable on `localhost:9000`, integration tests will fail.
+- If MinIO is not reachable on `localhost:9305`, integration tests will fail.
 
 ## Coding Standards
 
@@ -113,7 +114,7 @@ cargo test
 
 - Enable logs with `RUST_LOG=debug` or module-specific filters.
 - Check Sentry config if trace spans are missing.
-- For integration tests, confirm MinIO is reachable at `localhost:9000`.
+- For integration tests, confirm MinIO is reachable at `localhost:9305`.
 
 ## Common Pitfalls
 
@@ -131,6 +132,7 @@ cargo test
 **Critical:** do not be a yes-man. Challenge design choices that violate core rules.
 
 Core rules:
+
 - Single responsibility per function.
 - Boring > clever.
 - Search before you implement.
@@ -139,6 +141,7 @@ Core rules:
 - Prefer explicit, contextual errors.
 
 When to push back:
+
 - Proposed change adds redundant state or logic.
 - Implementation would block in async contexts.
 - Design violates immutability or structured logging standards.
