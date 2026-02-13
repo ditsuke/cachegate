@@ -1,6 +1,6 @@
-use axum::extract::MatchedPath;
-use axum::extract::Request;
+use axum::extract::{ConnectInfo, MatchedPath, Request};
 use sentry::types::Dsn;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
 use tracing::info_span;
@@ -178,6 +178,16 @@ async fn async_main(config: Config) -> anyhow::Result<()> {
                     .extensions()
                     .get::<MatchedPath>()
                     .map(MatchedPath::as_str);
+                let client_host = request
+                    .headers()
+                    .get("x-forwarded-for")
+                    .and_then(|value| value.to_str().ok())
+                    .and_then(|value| value.split(',').next())
+                    .map(|value| value.trim().to_string());
+                let client_addr = request
+                    .extensions()
+                    .get::<ConnectInfo<SocketAddr>>()
+                    .map(|info| info.0);
 
                 let op = match matched_path {
                     Some("/metrics") => "http.r.metrics",
@@ -197,6 +207,8 @@ async fn async_main(config: Config) -> anyhow::Result<()> {
                     "http_request",
                     method = ?request.method(),
                     matched_path,
+                    client_host = ?client_host,
+                    client_addr = ?client_addr,
                     "sentry.op" = op,
                 )
             }),
@@ -206,7 +218,12 @@ async fn async_main(config: Config) -> anyhow::Result<()> {
         .await
         .with_context(|| format!("failed to bind to {}", config.listen))?;
     info!(listen = %config.listen, "listening");
-    axum::serve(listener, app).await.context("server failed")?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    .context("server failed")?;
 
     Ok(())
 }
