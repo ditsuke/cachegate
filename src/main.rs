@@ -238,21 +238,21 @@ fn init_tracing(sentry_enabled: bool) {
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
 
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+
     let mut layers = Vec::<BoxedLayer>::new();
 
-    // 1. Environment filter (log level from RUST_LOG)
     layers.push(
-        EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| EnvFilter::new("info"))
+        make_fmt_layer(enable_pretty)
+            .with_filter(filter.clone())
             .boxed(),
     );
 
-    layers.push(make_fmt_layer(enable_pretty));
-
+    // ErrorLayer enables capturing SpanTrace so errors can include span context.
     layers.push(ErrorLayer::default().boxed());
 
     if sentry_enabled {
-        layers.push(sentry_tracing::layer().boxed());
+        layers.push(sentry_tracing::layer().with_filter(filter).boxed());
     }
 
     // 5. Compose all layers into one subscriber
