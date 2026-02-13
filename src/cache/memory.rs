@@ -45,6 +45,7 @@ impl MemoryCache {
 
 #[async_trait]
 impl CacheBackend for MemoryCache {
+    #[tracing::instrument(skip(self))]
     async fn get(&self, key: &CacheKey) -> Option<CacheEntry> {
         enum LookupResult {
             Hit(CacheEntry),
@@ -81,6 +82,7 @@ impl CacheBackend for MemoryCache {
         }
     }
 
+    #[tracing::instrument(skip(self, bytes, content_type))]
     async fn put(&self, key: CacheKey, bytes: Bytes, content_type: Option<String>) {
         let mut state = self.state.lock().await;
         if state.max_bytes == 0 || state.ttl_seconds == 0 {
@@ -123,6 +125,7 @@ impl CacheBackend for MemoryCache {
         }
     }
 
+    #[tracing::instrument(skip(self))]
     async fn stats(&self) -> CacheStats {
         let state = self.state.lock().await;
         CacheStats {

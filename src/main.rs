@@ -1,5 +1,9 @@
+use axum::extract::MatchedPath;
+use axum::extract::Request;
 use sentry::types::Dsn;
 use std::sync::Arc;
+use tower_http::trace::TraceLayer;
+use tracing::info_span;
 use tracing_error::ErrorLayer;
 use tracing_subscriber::fmt;
 
@@ -165,7 +169,38 @@ async fn async_main(config: Config) -> anyhow::Result<()> {
         .route("/metrics", get(handler::metrics))
         .route("/health", get(handler::health))
         .merge(protected)
-        .with_state(state);
+        .with_state(state)
+        .layer(
+            TraceLayer::new_for_http().make_span_with(|request: &Request<_>| {
+                // Log the matched route's path (with placeholders not filled in).
+                // Use request.uri() or OriginalUri if you want the real path.
+                let matched_path = request
+                    .extensions()
+                    .get::<MatchedPath>()
+                    .map(MatchedPath::as_str);
+
+                let op = match matched_path {
+                    Some("/metrics") => "http.r.metrics",
+                    Some("/stats") => "http.r.stats",
+                    Some("/health") => "http.r.health",
+                    Some("/{bucket_id}/{*path}") => {
+                        if request.method() == axum::http::Method::HEAD {
+                            "http.r.head_object"
+                        } else {
+                            "http.r.get_object"
+                        }
+                    }
+                    Some(_) | None => "http.r.unknown",
+                };
+
+                info_span!(
+                    "http_request",
+                    method = ?request.method(),
+                    matched_path,
+                    "sentry.op" = op,
+                )
+            }),
+        );
 
     let listener = tokio::net::TcpListener::bind(&config.listen)
         .await
