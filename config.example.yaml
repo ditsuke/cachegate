@@ -27,6 +27,5 @@ stores:
     allow_http: false
   assets-azure:
     type: azure
-    account: "my-account"
     container: "assets"
-    access_key: "..."
+    connection_string: "DefaultEndpointsProtocol=https;AccountName=my-account;AccountKey=...;EndpointSuffix=core.windows.net"
