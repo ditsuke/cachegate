@@ -16,11 +16,12 @@ ed25519-dalek = { version = "2", features = ["rand_core"] }
 envious = "0.2.2"
 futures = "0.3"
 infer = "0.19"
-foyer = "0.12"
+foyer = { version = "0.22.3", features = ["serde"] }
 lru = "^0.16"
 mime_guess = "2"
 object_store = { version = "0.13", features = ["aws", "azure"] }
-prometheus = "0.13"
+mixtrics = { version = "0.2.0", features = ["prometheus_0_13"] }
+prometheus_0_13 = { package = "prometheus", version = "0.13" }
 rand = "0.8"
 sentry = "^0.46"
 sentry-tower = "^0.46"

@@ -1,7 +1,8 @@
 use anyhow::{Context, anyhow};
 use async_trait::async_trait;
 use bytes::Bytes;
-use foyer::{DirectFsDeviceOptions, Engine, HybridCache, HybridCacheBuilder};
+use foyer::{BlockEngineConfig, DeviceBuilder, FsDeviceBuilder, HybridCache, HybridCacheBuilder, PsyncIoEngineConfig};
+use mixtrics::metrics::BoxedRegistry;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{info, warn};
@@ -18,7 +19,10 @@ pub struct FoyerCache {
 }
 
 impl FoyerCache {
-    pub async fn new(policy: CachePolicy) -> Result<FoyerCache, anyhow::Error> {
+    pub async fn new(
+        policy: CachePolicy,
+        registry: BoxedRegistry,
+    ) -> Result<FoyerCache, anyhow::Error> {
         let max_bytes_memory = policy.max_memory.as_u64();
         if max_bytes_memory == 0 || policy.ttl_seconds == 0 {
             return Err(anyhow!("Bad policy: 0 max_bytes_memory/ttl_seconds"));
@@ -36,14 +40,18 @@ impl FoyerCache {
 
         std::fs::create_dir_all(&disk_path).context("failed to create disk cache directory")?;
 
-        let device_options =
-            DirectFsDeviceOptions::new(&disk_path).with_capacity(disk_capacity as usize);
+        let device = FsDeviceBuilder::new(&disk_path)
+            .with_capacity(disk_capacity as usize)
+            .build()
+            .context("failed to build disk cache device")?;
 
         let cache = HybridCacheBuilder::new()
             .with_name("cachegate")
+            .with_metrics_registry(registry)
             .memory(max_bytes_memory as usize)
-            .storage(Engine::Large)
-            .with_device_options(device_options)
+            .storage()
+            .with_io_engine_config(PsyncIoEngineConfig::new())
+            .with_engine_config(BlockEngineConfig::new(device))
             .build()
             .await
             .context("Failed to initialise cache")?;
@@ -109,6 +117,10 @@ mod tests {
     use super::*;
     use crate::cache::{CacheBackend, CacheKey};
 
+    fn noop_registry() -> BoxedRegistry {
+        Box::new(mixtrics::registry::noop::NoopMetricsRegistry)
+    }
+
     fn make_policy(
         ttl_seconds: u64,
         max_memory_bytes: u64,
@@ -126,21 +138,21 @@ mod tests {
     #[tokio::test]
     async fn new_rejects_zero_max_memory() {
         let policy = make_policy(60, 0, 1024 * 1024, None);
-        let result = FoyerCache::new(policy).await;
+        let result = FoyerCache::new(policy, noop_registry()).await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn new_rejects_zero_ttl() {
         let policy = make_policy(0, 1024 * 1024, 1024 * 1024, None);
-        let result = FoyerCache::new(policy).await;
+        let result = FoyerCache::new(policy, noop_registry()).await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn new_rejects_zero_max_disk() {
         let policy = make_policy(60, 1024 * 1024, 0, None);
-        let result = FoyerCache::new(policy).await;
+        let result = FoyerCache::new(policy, noop_registry()).await;
         assert!(result.is_err());
     }
 
@@ -153,7 +165,7 @@ mod tests {
             1024 * 1024,
             Some(disk_dir.path().to_string_lossy().to_string()),
         );
-        let result = FoyerCache::new(policy).await;
+        let result = FoyerCache::new(policy, noop_registry()).await;
         assert!(result.is_ok());
     }
 
@@ -166,7 +178,7 @@ mod tests {
             1024 * 1024,
             Some(disk_dir.path().to_string_lossy().to_string()),
         );
-        let cache = FoyerCache::new(policy).await.unwrap();
+        let cache = FoyerCache::new(policy, noop_registry()).await.unwrap();
 
         let key = CacheKey::new("bucket".to_string(), "nonexistent.txt".to_string());
         let result = cache.get(&key).await;
@@ -182,7 +194,7 @@ mod tests {
             1024 * 1024,
             Some(disk_dir.path().to_string_lossy().to_string()),
         );
-        let cache = FoyerCache::new(policy).await.unwrap();
+        let cache = FoyerCache::new(policy, noop_registry()).await.unwrap();
 
         let key = CacheKey::new("bucket".to_string(), "test.txt".to_string());
         let data = Bytes::from(b"hello world".to_vec());

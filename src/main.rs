@@ -146,18 +146,21 @@ async fn async_main(config: Config) -> anyhow::Result<()> {
     let auth = AuthState::from_config(&config.auth).context("failed to initialize auth")?;
     let stores = build_stores(&config.stores).context("failed to build stores")?;
 
+    let metrics = Arc::new(Metrics::new());
+
     // Use Foyer hybrid cache if disk config provided, otherwise MemoryCache
     if config.cache.max_disk.as_u64() > 0 || config.cache.disk_path.is_some() {
+        let registry = metrics.registry();
         let state = AppState::<FoyerCache> {
             stores,
             auth,
             cache: Arc::new(
-                FoyerCache::new(config.cache.clone())
+                FoyerCache::new(config.cache.clone(), registry)
                     .await
                     .context("Failed to foyer cache")?,
             ),
             inflight: Arc::new(Inflight::new()),
-            metrics: Arc::new(Metrics::new()),
+            metrics: metrics.clone(),
         };
         return run_server(Arc::new(state), config.listen).await;
     }
@@ -168,7 +171,7 @@ async fn async_main(config: Config) -> anyhow::Result<()> {
         auth,
         cache: Arc::new(MemoryCache::new(config.cache.clone())),
         inflight: Arc::new(Inflight::new()),
-        metrics: Arc::new(Metrics::new()),
+        metrics,
     };
     run_server(Arc::new(state), config.listen).await
 }

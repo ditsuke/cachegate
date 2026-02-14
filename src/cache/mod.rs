@@ -30,7 +30,6 @@ pub struct CacheKey {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct CacheStats {
     pub inserts: u64,
 }

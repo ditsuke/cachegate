@@ -1,8 +1,9 @@
-use prometheus::core::Collector;
-use prometheus::{
-    CounterVec, Encoder, HistogramOpts, HistogramVec, IntGauge, Opts, Registry, TextEncoder,
-};
+use mixtrics::metrics::{BoxedCounterVec, BoxedHistogramVec, BoxedRegistry};
+use mixtrics::registry::prometheus_0_13::PrometheusMetricsRegistry;
+use prometheus_0_13::proto::MetricFamily;
+use prometheus_0_13::{Encoder, Registry, TextEncoder};
 use serde::Serialize;
+use std::borrow::Cow;
 
 #[derive(Debug, Clone, Copy)]
 pub enum UpstreamErrorKind {
@@ -41,158 +42,133 @@ impl UpstreamErrorKind {
 #[derive(Debug)]
 pub struct Metrics {
     registry: Registry,
-    requests_total: CounterVec,
-    auth_fail_total: CounterVec,
-    cache_hit_total: CounterVec,
-    cache_miss_total: CounterVec,
-    upstream_ok_total: CounterVec,
-    upstream_err_total: CounterVec,
-    cache_entries: IntGauge,
-    cache_bytes: IntGauge,
-    upstream_latency_ms: HistogramVec,
+    mixtrics_registry: PrometheusMetricsRegistry,
+    requests_total: BoxedCounterVec,
+    auth_fail_total: BoxedCounterVec,
+    cache_hit_total: BoxedCounterVec,
+    cache_miss_total: BoxedCounterVec,
+    upstream_ok_total: BoxedCounterVec,
+    upstream_err_total: BoxedCounterVec,
+    upstream_latency_ms: BoxedHistogramVec,
 }
 
 impl Metrics {
     pub fn new() -> Self {
         let registry = Registry::new();
+        let mixtrics_registry = PrometheusMetricsRegistry::new(registry.clone());
+        let registry_handle: BoxedRegistry = Box::new(mixtrics_registry.clone());
 
-        let requests_total = CounterVec::new(
-            Opts::new(
-                "cachegate_requests_total",
-                "Total requests served by cachegate",
-            ),
+        let requests_total = registry_handle.register_counter_vec(
+            "cachegate_requests_total".into(),
+            "Total requests served by cachegate".into(),
             &["method", "status"],
-        )
-        .expect("requests_total metrics");
-        let auth_fail_total = CounterVec::new(
-            Opts::new("cachegate_auth_fail_total", "Total authentication failures"),
+        );
+        let auth_fail_total = registry_handle.register_counter_vec(
+            "cachegate_auth_fail_total".into(),
+            "Total authentication failures".into(),
             &["method"],
-        )
-        .expect("auth_fail_total metrics");
-        let cache_hit_total = CounterVec::new(
-            Opts::new("cachegate_cache_hit_total", "Total cache hits"),
+        );
+        let cache_hit_total = registry_handle.register_counter_vec(
+            "cachegate_cache_hit_total".into(),
+            "Total cache hits".into(),
             &["method"],
-        )
-        .expect("cache_hit_total metrics");
-        let cache_miss_total = CounterVec::new(
-            Opts::new("cachegate_cache_miss_total", "Total cache misses"),
+        );
+        let cache_miss_total = registry_handle.register_counter_vec(
+            "cachegate_cache_miss_total".into(),
+            "Total cache misses".into(),
             &["method"],
-        )
-        .expect("cache_miss_total metrics");
-        let upstream_ok_total = CounterVec::new(
-            Opts::new("cachegate_upstream_ok_total", "Total upstream successes"),
+        );
+        let upstream_ok_total = registry_handle.register_counter_vec(
+            "cachegate_upstream_ok_total".into(),
+            "Total upstream successes".into(),
             &["method"],
-        )
-        .expect("upstream_ok_total metrics");
-        let upstream_err_total = CounterVec::new(
-            Opts::new("cachegate_upstream_err_total", "Total upstream errors"),
+        );
+        let upstream_err_total = registry_handle.register_counter_vec(
+            "cachegate_upstream_err_total".into(),
+            "Total upstream errors".into(),
             &["method", "error_kind"],
-        )
-        .expect("upstream_err_total metrics");
-        let cache_entries = IntGauge::new("cachegate_cache_entries", "Current cache entry count")
-            .expect("cache_entries metrics");
-        let cache_bytes = IntGauge::new("cachegate_cache_bytes", "Current cache bytes")
-            .expect("cache_bytes metrics");
+        );
 
         let buckets = vec![
             1.0, 5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2000.0, 5000.0,
         ];
-        let upstream_latency_ms = HistogramVec::new(
-            HistogramOpts::new(
-                "cachegate_upstream_latency_ms",
-                "Upstream request latency in milliseconds",
-            )
-            .buckets(buckets),
+        let upstream_latency_ms = registry_handle.register_histogram_vec_with_buckets(
+            "cachegate_upstream_latency_ms".into(),
+            "Upstream request latency in milliseconds".into(),
             &["method"],
-        )
-        .expect("upstream_latency_ms metrics");
-
-        registry
-            .register(Box::new(requests_total.clone()))
-            .expect("register requests_total");
-        registry
-            .register(Box::new(auth_fail_total.clone()))
-            .expect("register auth_fail_total");
-        registry
-            .register(Box::new(cache_hit_total.clone()))
-            .expect("register cache_hit_total");
-        registry
-            .register(Box::new(cache_miss_total.clone()))
-            .expect("register cache_miss_total");
-        registry
-            .register(Box::new(upstream_ok_total.clone()))
-            .expect("register upstream_ok_total");
-        registry
-            .register(Box::new(upstream_err_total.clone()))
-            .expect("register upstream_err_total");
-        registry
-            .register(Box::new(cache_entries.clone()))
-            .expect("register cache_entries");
-        registry
-            .register(Box::new(cache_bytes.clone()))
-            .expect("register cache_bytes");
-        registry
-            .register(Box::new(upstream_latency_ms.clone()))
-            .expect("register upstream_latency_ms");
+            buckets,
+        );
 
         Self {
             registry,
+            mixtrics_registry,
             requests_total,
             auth_fail_total,
             cache_hit_total,
             cache_miss_total,
             upstream_ok_total,
             upstream_err_total,
-            cache_entries,
-            cache_bytes,
             upstream_latency_ms,
         }
     }
 
+    pub fn registry(&self) -> BoxedRegistry {
+        Box::new(self.mixtrics_registry.clone())
+    }
+
     pub fn inc_requests(&self, method: &str, status: &str) {
         self.requests_total
-            .with_label_values(&[method, status])
-            .inc();
+            .counter(&[owned_label(method), owned_label(status)])
+            .increase(1);
     }
 
     pub fn inc_auth_fail(&self, method: &str) {
-        self.auth_fail_total.with_label_values(&[method]).inc();
+        self.auth_fail_total
+            .counter(&[owned_label(method)])
+            .increase(1);
     }
 
     pub fn inc_cache_hit(&self, method: &str) {
-        self.cache_hit_total.with_label_values(&[method]).inc();
+        self.cache_hit_total
+            .counter(&[owned_label(method)])
+            .increase(1);
     }
 
     pub fn inc_cache_miss(&self, method: &str) {
-        self.cache_miss_total.with_label_values(&[method]).inc();
+        self.cache_miss_total
+            .counter(&[owned_label(method)])
+            .increase(1);
     }
 
     pub fn inc_upstream_ok(&self, method: &str) {
-        self.upstream_ok_total.with_label_values(&[method]).inc();
+        self.upstream_ok_total
+            .counter(&[owned_label(method)])
+            .increase(1);
     }
 
     pub fn inc_upstream_err(&self, method: &str, error_kind: UpstreamErrorKind) {
         self.upstream_err_total
-            .with_label_values(&[method, error_kind.as_str()])
-            .inc();
+            .counter(&[owned_label(method), owned_label(error_kind.as_str())])
+            .increase(1);
     }
 
     pub fn observe_upstream_latency_ms(&self, method: &str, value_ms: u64) {
         self.upstream_latency_ms
-            .with_label_values(&[method])
-            .observe(value_ms as f64);
+            .histogram(&[owned_label(method)])
+            .record(value_ms as f64);
     }
 
     pub fn snapshot(&self) -> MetricsSnapshot {
+        let metric_families = self.registry.gather();
         MetricsSnapshot {
-            requests_total: sum_counter(&self.requests_total),
-            auth_fail_total: sum_counter(&self.auth_fail_total),
-            cache_hit_total: sum_counter(&self.cache_hit_total),
-            cache_miss_total: sum_counter(&self.cache_miss_total),
-            upstream_ok_total: sum_counter(&self.upstream_ok_total),
-            upstream_err_total: sum_counter(&self.upstream_err_total),
-            cache_entries: self.cache_entries.get() as u64,
-            cache_bytes: self.cache_bytes.get() as u64,
+            requests_total: sum_counter(&metric_families, "cachegate_requests_total"),
+            auth_fail_total: sum_counter(&metric_families, "cachegate_auth_fail_total"),
+            cache_hit_total: sum_counter(&metric_families, "cachegate_cache_hit_total"),
+            cache_miss_total: sum_counter(&metric_families, "cachegate_cache_miss_total"),
+            upstream_ok_total: sum_counter(&metric_families, "cachegate_upstream_ok_total"),
+            upstream_err_total: sum_counter(&metric_families, "cachegate_upstream_err_total"),
+            cache_entries: sum_gauge(&metric_families, "cachegate_cache_entries"),
+            cache_bytes: sum_gauge(&metric_families, "cachegate_cache_bytes"),
         }
     }
 
@@ -207,14 +183,36 @@ impl Metrics {
     }
 }
 
-fn sum_counter(counter: &CounterVec) -> u64 {
-    let mut total = 0f64;
-    for family in counter.collect() {
-        for metric in family.get_metric() {
-            total += metric.get_counter().get_value();
-        }
-    }
-    total.round() as u64
+fn owned_label(value: &str) -> Cow<'static, str> {
+    Cow::Owned(value.to_string())
+}
+
+fn sum_counter(metric_families: &[MetricFamily], name: &str) -> u64 {
+    metric_families
+        .iter()
+        .find(|family| family.get_name() == name)
+        .map(|family| {
+            let mut total = 0f64;
+            for metric in family.get_metric() {
+                total += metric.get_counter().get_value();
+            }
+            total.round() as u64
+        })
+        .unwrap_or(0)
+}
+
+fn sum_gauge(metric_families: &[MetricFamily], name: &str) -> u64 {
+    metric_families
+        .iter()
+        .find(|family| family.get_name() == name)
+        .map(|family| {
+            let mut total = 0f64;
+            for metric in family.get_metric() {
+                total += metric.get_gauge().get_value();
+            }
+            total.round() as u64
+        })
+        .unwrap_or(0)
 }
 
 #[derive(Debug, Serialize)]
