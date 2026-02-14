@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use async_trait::async_trait;
 use bytes::Bytes;
 use lru::LruCache;
@@ -22,23 +24,26 @@ struct CacheState {
     ttl_seconds: u64,
 }
 
-#[derive(Clone)]
 pub struct MemoryCache {
     state: std::sync::Arc<Mutex<CacheState>>,
+
+    inserts: AtomicU64,
 }
 
 impl MemoryCache {
     pub fn new(policy: CachePolicy) -> Self {
         let lru = LruCache::unbounded();
+        let max_bytes = policy.max_memory.as_u64();
         let state = CacheState {
             lru,
             total_bytes: 0,
-            max_bytes: policy.max_bytes,
+            max_bytes,
             ttl_seconds: policy.ttl_seconds,
         };
 
         Self {
             state: std::sync::Arc::new(Mutex::new(state)),
+            inserts: AtomicU64::new(0),
         }
     }
 }
@@ -123,14 +128,13 @@ impl CacheBackend for MemoryCache {
                 break;
             }
         }
+        self.inserts.fetch_add(1, Ordering::Relaxed);
     }
 
     #[tracing::instrument(skip(self))]
     async fn stats(&self) -> CacheStats {
-        let state = self.state.lock().await;
         CacheStats {
-            entries: state.lru.len(),
-            total_bytes: state.total_bytes,
+            inserts: self.inserts.load(Ordering::Relaxed),
         }
     }
 }

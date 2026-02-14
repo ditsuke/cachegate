@@ -27,7 +27,9 @@ mod metrics;
 mod store;
 
 use auth::AuthState;
-use cache::memory::MemoryCache;
+use cache::CacheBackend;
+use cache::MemoryCache;
+use cache::foyer::FoyerCache;
 use config::{Config, load_from_env};
 use handler::AppState;
 use inflight::Inflight;
@@ -143,17 +145,41 @@ struct AuthKeyPair {
 async fn async_main(config: Config) -> anyhow::Result<()> {
     let auth = AuthState::from_config(&config.auth).context("failed to initialize auth")?;
     let stores = build_stores(&config.stores).context("failed to build stores")?;
-    let cache = Arc::new(MemoryCache::new(config.cache.clone()));
+
     let metrics = Arc::new(Metrics::new());
 
-    let state = Arc::new(AppState {
+    // Use Foyer hybrid cache if disk config provided, otherwise MemoryCache
+    if config.cache.max_disk.as_u64() > 0 || config.cache.disk_path.is_some() {
+        let registry = metrics.registry();
+        let state = AppState::<FoyerCache> {
+            stores,
+            auth,
+            cache: Arc::new(
+                FoyerCache::new(config.cache.clone(), registry)
+                    .await
+                    .context("Failed to foyer cache")?,
+            ),
+            inflight: Arc::new(Inflight::new()),
+            metrics: metrics.clone(),
+        };
+        return run_server(Arc::new(state), config.listen).await;
+    }
+
+    tracing::info!("Using memory-only cache");
+    let state = AppState::<MemoryCache> {
         stores,
         auth,
-        cache,
+        cache: Arc::new(MemoryCache::new(config.cache.clone())),
         inflight: Arc::new(Inflight::new()),
         metrics,
-    });
+    };
+    run_server(Arc::new(state), config.listen).await
+}
 
+async fn run_server<C: CacheBackend + 'static>(
+    state: Arc<AppState<C>>,
+    listen: String,
+) -> anyhow::Result<()> {
     let protected = Router::new()
         .route(
             "/{bucket_id}/{*path}",
@@ -172,8 +198,6 @@ async fn async_main(config: Config) -> anyhow::Result<()> {
         .with_state(state)
         .layer(
             TraceLayer::new_for_http().make_span_with(|request: &Request<_>| {
-                // Log the matched route's path (with placeholders not filled in).
-                // Use request.uri() or OriginalUri if you want the real path.
                 let matched_path = request
                     .extensions()
                     .get::<MatchedPath>()
@@ -214,10 +238,10 @@ async fn async_main(config: Config) -> anyhow::Result<()> {
             }),
         );
 
-    let listener = tokio::net::TcpListener::bind(&config.listen)
+    let listener = tokio::net::TcpListener::bind(&listen)
         .await
-        .with_context(|| format!("failed to bind to {}", config.listen))?;
-    info!(listen = %config.listen, "listening");
+        .with_context(|| format!("failed to bind to {}", listen))?;
+    info!(listen = %listen, "listening");
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
@@ -265,17 +289,14 @@ fn init_tracing(sentry_enabled: bool) {
             .boxed(),
     );
 
-    // ErrorLayer enables capturing SpanTrace so errors can include span context.
     layers.push(ErrorLayer::default().boxed());
 
     if sentry_enabled {
         layers.push(sentry_tracing::layer().with_filter(filter).boxed());
     }
 
-    // 5. Compose all layers into one subscriber
     let subscriber = tracing_subscriber::registry().with(layers);
 
-    // 6. Set as global default
     tracing::subscriber::set_global_default(subscriber).expect("Failed to set global subscriber");
 }
 

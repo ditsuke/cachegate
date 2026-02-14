@@ -7,7 +7,10 @@ auth:
 
 cache:
   ttl_seconds: 3600
-  max_bytes: 1073741824
+  max_memory: 1GB
+  # Optional: enable hybrid disk-memory cache (Foyer)
+  # max_disk: 1GB
+  # disk_path: "/var/lib/cachegate/cache"
 
 sentry:
   dsn: null

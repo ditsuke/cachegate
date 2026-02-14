@@ -17,7 +17,7 @@ Some design decisions are inspired by [Cachey](https://github.com/s2-streamstore
   - Presigned URL auth via `?sig=<payload>.<signature>`
   - Bearer token auth via `Authorization: Bearer <token>`
 - Modular store registry (`s3`, `azure`)
-- In-memory LRU cache with TTL + max bytes
+- Hybrid disk-memory LRU cache (Foyer) with TTL + max bytes + disk persistence
 - Singleflight on cache misses to avoid thundering herd
 - Content-Type prefill, from path with `magic` fallback.
 - `/stats` and Prometheus-compatible `/metrics`.
@@ -45,6 +45,9 @@ auth:
 cache:
   ttl_seconds: 3600
   max_bytes: 1073741824
+  # Optional: enable hybrid disk-memory cache (Foyer)
+  # disk_capacity_bytes: 1073741824  # 1GB disk cache
+  # disk_path: "/var/lib/cachegate/cache"
 
 sentry:
   dsn: null
@@ -135,6 +138,10 @@ CACHEGATE__AUTH__BEARER_TOKEN=cachegate-secret
 CACHEGATE__CACHE__TTL_SECONDS=3600
 CACHEGATE__CACHE__MAX_BYTES=524288000
 
+# Optional: hybrid disk-memory cache (Foyer)
+# CACHEGATE__CACHE__DISK_CAPACITY_BYTES=1073741824
+# CACHEGATE__CACHE__DISK_PATH=/var/lib/cachegate/cache
+
 # Optional
 #CACHEGATE__SENTRY__DSN=
 #CACHEGATE__SENTRY__ENVIRONMENT=
@@ -190,3 +197,7 @@ Optional Sentry instrumentation is enabled by setting `sentry.dsn` in config. Tr
 - LRU eviction on insert when `max_bytes` is exceeded
 - TTL is enforced on read
 - Objects larger than `max_bytes` are served but not cached
+- Optional disk-backed cache (Foyer) for larger capacities:
+  - Set `disk_capacity_bytes` to enable hybrid disk-memory cache
+  - Set `disk_path` for persistent cache directory
+  - Falls back to memory-only if disk init fails
