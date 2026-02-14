@@ -8,7 +8,10 @@ use axum::http::{HeaderMap, HeaderValue, Request, Response, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::IntoResponse;
 use bytes::Bytes;
+use bytes::BytesMut;
+use futures::StreamExt;
 use object_store::ObjectStoreExt;
+use object_store::WriteMultipart;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 use tracing::{info, info_span, warn};
@@ -25,6 +28,7 @@ pub struct AppState<C: CacheBackend> {
     pub cache: Arc<C>,
     pub inflight: Arc<Inflight>,
     pub metrics: Arc<Metrics>,
+    pub cache_max_object_bytes: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -312,6 +316,175 @@ pub async fn head_object<C: CacheBackend + 'static>(
     result
 }
 
+pub async fn put_object<C: CacheBackend + 'static>(
+    State(state): State<Arc<AppState<C>>>,
+    Path(PathParams { bucket_id, path }): Path<PathParams>,
+    Extension(auth): Extension<AuthContext>,
+    headers: HeaderMap,
+    body: Body,
+) -> Result<Response<Body>, AppError> {
+    let start = Instant::now();
+    let method = "PUT";
+    let span = info_span!(
+        "put_object",
+        bucket_id = %bucket_id,
+        path = %path,
+        auth = tracing::field::Empty,
+        cache = tracing::field::Empty,
+        status = tracing::field::Empty,
+        bytes = tracing::field::Empty,
+        elapsed_ms = tracing::field::Empty
+    );
+    let _enter = span.enter();
+
+    span.record("auth", auth.method.as_str());
+    let key = CacheKey::new(bucket_id.clone(), path.clone());
+    let mut response_bytes: Option<usize> = None;
+
+    let result = 'request: {
+        if path.is_empty() || path.contains("..") || path.starts_with('/') {
+            break 'request Err(AppError::bad_request("invalid object path"));
+        }
+
+        let store = state.stores.get(&bucket_id).ok_or_else(|| {
+            warn!(bucket_id = %bucket_id, path = %path, "unknown bucket");
+            AppError::not_found("unknown bucket")
+        })?;
+
+        let location: object_store::path::Path = path.as_str().into();
+
+        match store.head(&location).await {
+            Ok(_) => {
+                warn!(bucket_id = %bucket_id, path = %path, "overwriting existing object");
+            }
+            Err(err) => {
+                if !matches!(err, object_store::Error::NotFound { .. }) {
+                    warn!(bucket_id = %bucket_id, path = %path, error = %err, "head check before put failed");
+                }
+            }
+        }
+
+        let upload_start = Instant::now();
+        let upload = match store.put_multipart(&location).await {
+            Ok(upload) => upload,
+            Err(err) => {
+                let error_kind = UpstreamErrorKind::from_store_error(&err);
+                state
+                    .metrics
+                    .observe_upstream_latency_ms(method, upload_start.elapsed().as_millis() as u64);
+                state.metrics.inc_upstream_err(method, error_kind);
+                warn!(
+                    bucket_id = %bucket_id,
+                    path = %path,
+                    elapsed_ms = upload_start.elapsed().as_millis(),
+                    error = %err,
+                    "upstream put init failed"
+                );
+                break 'request Err(AppError::from_store(err));
+            }
+        };
+
+        let mut write = WriteMultipart::new(upload);
+        let mut stream = body.into_data_stream();
+        let mut total_bytes: usize = 0;
+        let cap_bytes = state.cache_max_object_bytes as usize;
+        let mut buffer = BytesMut::new();
+        let mut capped = cap_bytes == 0;
+
+        while let Some(chunk) = stream.next().await {
+            let chunk = match chunk {
+                Ok(chunk) => chunk,
+                Err(err) => {
+                    let _ = write.abort().await;
+                    warn!(bucket_id = %bucket_id, path = %path, error = %err, "failed reading request body");
+                    break 'request Err(AppError::bad_request("invalid request body"));
+                }
+            };
+
+            total_bytes = total_bytes.saturating_add(chunk.len());
+
+            if !capped {
+                let remaining = cap_bytes.saturating_sub(buffer.len());
+                if remaining == 0 {
+                    capped = true;
+                } else if chunk.len() <= remaining {
+                    buffer.extend_from_slice(&chunk);
+                } else {
+                    buffer.extend_from_slice(&chunk[..remaining]);
+                    capped = true;
+                }
+            }
+
+            write.put(chunk);
+        }
+
+        match write.finish().await {
+            Ok(_result) => {
+                state
+                    .metrics
+                    .observe_upstream_latency_ms(method, upload_start.elapsed().as_millis() as u64);
+                state.metrics.inc_upstream_ok(method);
+            }
+            Err(err) => {
+                let error_kind = UpstreamErrorKind::from_store_error(&err);
+                state
+                    .metrics
+                    .observe_upstream_latency_ms(method, upload_start.elapsed().as_millis() as u64);
+                state.metrics.inc_upstream_err(method, error_kind);
+                warn!(
+                    bucket_id = %bucket_id,
+                    path = %path,
+                    elapsed_ms = upload_start.elapsed().as_millis(),
+                    error = %err,
+                    "upstream put failed"
+                );
+                break 'request Err(AppError::from_store(err));
+            }
+        }
+
+        response_bytes = Some(total_bytes);
+
+        if !capped {
+            let content_type = content_type_from_headers(&headers, &path);
+            span.record("cache", "insert");
+            state
+                .cache
+                .put(key, buffer.freeze(), content_type.clone())
+                .await;
+        } else {
+            span.record("cache", "skipped");
+            info!(
+                bucket_id = %bucket_id,
+                path = %path,
+                bytes = total_bytes,
+                cap_bytes,
+                "put cache skipped; payload exceeded cap"
+            );
+        }
+
+        break 'request Ok(build_put_response());
+    };
+
+    span.record("elapsed_ms", start.elapsed().as_millis().to_string());
+    let status_label = match &result {
+        Ok(response) => {
+            span.record("status", response.status().to_string());
+            if let Some(bytes) = response_bytes {
+                span.record("bytes", bytes.to_string());
+            }
+            response.status().as_u16().to_string()
+        }
+        Err(err) => {
+            span.record("status", err.status.to_string());
+            span.record("bytes", "0");
+            err.status.as_u16().to_string()
+        }
+    };
+    state.metrics.inc_requests(method, status_label.as_str());
+
+    result
+}
+
 async fn fetch_and_cache_entry<C: CacheBackend>(
     state: &AppState<C>,
     key: &CacheKey,
@@ -517,6 +690,26 @@ fn build_head_response_with_meta(length: u64, content_type: Option<String>) -> R
     headers.insert(header::CONTENT_LENGTH, len_value);
 
     response
+}
+
+fn build_put_response() -> Response<Body> {
+    let mut response = Response::new(Body::empty());
+    *response.status_mut() = StatusCode::OK;
+    response
+}
+
+fn content_type_from_headers(headers: &HeaderMap, path: &str) -> Option<String> {
+    if let Some(value) = headers.get(header::CONTENT_TYPE) {
+        if let Ok(value) = value.to_str() {
+            if !value.is_empty() {
+                return Some(value.to_string());
+            }
+        }
+    }
+
+    mime_guess::from_path(path)
+        .first()
+        .map(|mime| mime.essence_str().to_string())
 }
 
 fn parse_prefetch(params: &HashMap<String, String>) -> bool {

@@ -151,6 +151,11 @@ async fn async_main(config: Config) -> anyhow::Result<()> {
     // Use Foyer hybrid cache if disk config provided, otherwise MemoryCache
     if config.cache.max_disk.as_u64() > 0 || config.cache.disk_path.is_some() {
         let registry = metrics.registry();
+        let cache_max_object_bytes = if config.cache.max_object_size.as_u64() == 0 {
+            config.cache.max_memory.as_u64()
+        } else {
+            config.cache.max_object_size.as_u64()
+        };
         let state = AppState::<FoyerCache> {
             stores,
             auth,
@@ -161,17 +166,24 @@ async fn async_main(config: Config) -> anyhow::Result<()> {
             ),
             inflight: Arc::new(Inflight::new()),
             metrics: metrics.clone(),
+            cache_max_object_bytes,
         };
         return run_server(Arc::new(state), config.listen).await;
     }
 
     tracing::info!("Using memory-only cache");
+    let cache_max_object_bytes = if config.cache.max_object_size.as_u64() == 0 {
+        config.cache.max_memory.as_u64()
+    } else {
+        config.cache.max_object_size.as_u64()
+    };
     let state = AppState::<MemoryCache> {
         stores,
         auth,
         cache: Arc::new(MemoryCache::new(config.cache.clone())),
         inflight: Arc::new(Inflight::new()),
         metrics,
+        cache_max_object_bytes,
     };
     run_server(Arc::new(state), config.listen).await
 }
@@ -183,7 +195,9 @@ async fn run_server<C: CacheBackend + 'static>(
     let protected = Router::new()
         .route(
             "/{bucket_id}/{*path}",
-            get(handler::get_object).head(handler::head_object),
+            get(handler::get_object)
+                .head(handler::head_object)
+                .put(handler::put_object),
         )
         .route_layer(middleware::from_fn_with_state(
             state.clone(),

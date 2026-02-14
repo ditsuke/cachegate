@@ -28,6 +28,9 @@ pub struct CachePolicy {
     pub max_memory: ByteSize,
     #[serde(default)]
     #[serde(with = "bytesize_serde")]
+    pub max_object_size: ByteSize,
+    #[serde(default)]
+    #[serde(with = "bytesize_serde")]
     pub max_disk: ByteSize,
     #[serde(default)]
     pub disk_path: Option<String>,
