@@ -184,10 +184,7 @@ stores:
         .and_then(|value| value.to_str().ok())
         .unwrap_or("");
     assert_eq!(large_cache_status, "hit=0");
-    let large_body = get_large_response
-        .bytes()
-        .await
-        .expect("read large body");
+    let large_body = get_large_response.bytes().await.expect("read large body");
     assert_eq!(large_body.as_ref(), large_payload.as_slice());
 
     let overwrite_payload = b"cachegate put overwrite".to_vec();
@@ -206,10 +203,7 @@ stores:
         .await
         .expect("get overwrite");
     assert_eq!(overwrite_get.status(), StatusCode::OK);
-    let overwrite_body = overwrite_get
-        .bytes()
-        .await
-        .expect("read overwrite body");
+    let overwrite_body = overwrite_get.bytes().await.expect("read overwrite body");
     assert_eq!(overwrite_body.as_ref(), overwrite_payload.as_slice());
     let sig = build_sig(&signing_key, store_id, &object_key, "GET");
     let url = format!("{base_url}/{store_id}/{object_key}?sig={sig}");

@@ -1,7 +1,10 @@
 use anyhow::{Context, anyhow};
 use async_trait::async_trait;
 use bytes::Bytes;
-use foyer::{BlockEngineConfig, DeviceBuilder, FsDeviceBuilder, HybridCache, HybridCacheBuilder, PsyncIoEngineConfig};
+use foyer::{
+    BlockEngineConfig, DeviceBuilder, FsDeviceBuilder, HybridCache, HybridCacheBuilder,
+    PsyncIoEngineConfig,
+};
 use mixtrics::metrics::BoxedRegistry;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
