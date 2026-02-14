@@ -32,12 +32,12 @@ are split in some environments, like in kubernetes with configmaps and secrets.
 - [ ] Gateway node
     If a single node is unable to handle workload, we'll want to scale it out. At that point to maintain
     cache hits we'll want consistent-ish routing of requests to available nodes.
-    **Note**: We might just want to use rendevous hashing to sidestep the [cascading overload
-problem](https://arxiv.org/abs/1908.08762), but with the usecase I'm writing this for that's not so relevant.
+    **Note**: We might just want to use rendezvous hashing to sidestep the [cascading overload
+    problem](https://arxiv.org/abs/1908.08762), but with the usecase I'm writing this for that's not so relevant.
 
 - [ ] Multiple buckets to serve the same logical bucket. Could be useful to fulfill QoS requirements.
 
 ## Scope Expansion
 
-- [ ] Write through: expose PUT. This is kind of important for fresh objects, object storage is _eventually_ consistent.
+- [x] Write through: expose PUT. This is kind of important for fresh objects, object storage is _eventually_ consistent.
 - [ ] Object paging. Cachey has this as a **requirement**. We could have an _optional_ version of this design.

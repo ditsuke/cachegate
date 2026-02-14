@@ -1,6 +1,6 @@
 # Cachegate
 
-Minimal read-only proxy for S3 and Azure Blob Storage.
+Minimal read/write caching proxy for S3 and Azure Blob Storage.
 
 Allows for presigned-URL style access to objects to allow for constrained public access.
 
@@ -8,9 +8,10 @@ Some design decisions are inspired by [Cachey](https://github.com/s2-streamstore
 
 ## Features
 
-- Designed exclusively for immutable blobs. Assumes objects are never modified or deleted after creation.
+- Designed for immutable blobs. Assumes objects are never modified or deleted after creation.
 - `GET /:bucket_id/*path`
 - `HEAD /:bucket_id/*path`
+- `PUT /:bucket_id/*path`
 - `HEAD /:bucket_id/*path?prefetch=true|false|1|0`
   - Prefetch warms the cache without blocking HEAD
 - Auth
@@ -20,6 +21,7 @@ Some design decisions are inspired by [Cachey](https://github.com/s2-streamstore
 - Hybrid disk-memory LRU cache (Foyer) with TTL + max bytes + disk persistence
 - Singleflight on cache misses to avoid thundering herd
 - Content-Type prefill, from path with `magic` fallback.
+- Streaming write-through uploads.
 - `/stats` and Prometheus-compatible `/metrics`.
 
 ## Config
@@ -44,9 +46,10 @@ auth:
 
 cache:
   ttl_seconds: 3600
-  max_bytes: 1073741824
+  max_memory: 1GiB
+  max_object_size: 64MiB
   # Optional: enable hybrid disk-memory cache (Foyer)
-  # disk_capacity_bytes: 1073741824  # 1GB disk cache
+  # max_disk: 1GiB
   # disk_path: "/var/lib/cachegate/cache"
 
 sentry:
@@ -93,6 +96,7 @@ Notes:
 - `exp` is a unix timestamp in seconds.
 - `GET` is accepted for fetch.
 - `HEAD` is accepted for metadata-only fetch.
+- `PUT` is accepted for uploads.
 - `prefetch` is optional for `HEAD`. Default is `false`.
 
 ## Bearer token format
@@ -103,7 +107,7 @@ If `auth.bearer_token` is set, you can authenticate requests with:
 Authorization: Bearer <token>
 ```
 
-Bearer and presigned auth are both accepted for `GET` and `HEAD`.
+Bearer and presigned auth are both accepted for `GET`, `HEAD`, and `PUT`.
 If `bearer_token` is unset, only presign auth is available.
 
 ## Environment-only config
@@ -136,10 +140,11 @@ CACHEGATE__AUTH__PRIVATE_KEY=NC7y4q2_rmnWBhlnEo34B9FddA0DkGlu7XGOs76bZn8
 CACHEGATE__AUTH__BEARER_TOKEN=cachegate-secret
 
 CACHEGATE__CACHE__TTL_SECONDS=3600
-CACHEGATE__CACHE__MAX_BYTES=524288000
+CACHEGATE__CACHE__MAX_MEMORY=512MiB
+CACHEGATE__CACHE__MAX_OBJECT_SIZE=64MiB
 
 # Optional: hybrid disk-memory cache (Foyer)
-# CACHEGATE__CACHE__DISK_CAPACITY_BYTES=1073741824
+# CACHEGATE__CACHE__MAX_DISK=1GiB
 # CACHEGATE__CACHE__DISK_PATH=/var/lib/cachegate/cache
 
 # Optional
@@ -194,10 +199,12 @@ Optional Sentry instrumentation is enabled by setting `sentry.dsn` in config. Tr
 
 ## Cache behavior
 
-- LRU eviction on insert when `max_bytes` is exceeded
+- LRU eviction on insert when `max_memory` and `max_disk` are exceeded
 - TTL is enforced on read
-- Objects larger than `max_bytes` are served but not cached
-- Optional disk-backed cache (Foyer) for larger capacities:
-  - Set `disk_capacity_bytes` to enable hybrid disk-memory cache
+- PUT uploads stream to upstream and are cached only when size <= `max_object_size`
+  - Defaults to `max_memory` when unset
+- Objects larger than `max_object_size` are served but not cached
+- PUT overwrites are allowed but emit a warning log
+- Optional hybrid memory-disk backed cache (Foyer) for larger capacities:
+  - Set `max_disk` to enable hybrid disk-memory cache
   - Set `disk_path` for persistent cache directory
-  - Falls back to memory-only if disk init fails

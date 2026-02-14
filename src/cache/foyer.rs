@@ -130,6 +130,7 @@ mod tests {
         CachePolicy {
             ttl_seconds,
             max_memory: ByteSize(max_memory_bytes),
+            max_object_size: ByteSize(max_memory_bytes),
             max_disk: ByteSize(max_disk_bytes),
             disk_path,
         }

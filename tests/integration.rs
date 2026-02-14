@@ -97,6 +97,7 @@ auth:
 cache:
   ttl_seconds: 60
   max_memory: 10MB
+  max_object_size: 1MiB
   max_disk: 15MiB
   disk_path: {temp_disk_path}
 
@@ -129,6 +130,87 @@ stores:
 
     let store_id = "minio-test";
     let http = reqwest::Client::new();
+
+    let put_key = format!("upload-{}.txt", unix_timestamp());
+    let put_payload = b"cachegate put test".to_vec();
+    let put_url = format!("{base_url}/{store_id}/{put_key}");
+    let put_response = http
+        .put(&put_url)
+        .bearer_auth(TEST_BEARER_TOKEN)
+        .body(put_payload.clone())
+        .send()
+        .await
+        .expect("put upload");
+    assert_eq!(put_response.status(), StatusCode::OK);
+
+    let get_put_response = http
+        .get(&put_url)
+        .bearer_auth(TEST_BEARER_TOKEN)
+        .send()
+        .await
+        .expect("get after put");
+    assert_eq!(get_put_response.status(), StatusCode::OK);
+    let put_cache_status = get_put_response
+        .headers()
+        .get("X-CG-Status")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
+    assert_eq!(put_cache_status, "hit=1");
+    let put_body = get_put_response.bytes().await.expect("read put body");
+    assert_eq!(put_body.as_ref(), put_payload.as_slice());
+
+    let large_key = format!("upload-large-{}.bin", unix_timestamp());
+    let large_payload = vec![0u8; 2 * 1024 * 1024];
+    let large_url = format!("{base_url}/{store_id}/{large_key}");
+    let large_response = http
+        .put(&large_url)
+        .bearer_auth(TEST_BEARER_TOKEN)
+        .body(large_payload.clone())
+        .send()
+        .await
+        .expect("put large upload");
+    assert_eq!(large_response.status(), StatusCode::OK);
+
+    let get_large_response = http
+        .get(&large_url)
+        .bearer_auth(TEST_BEARER_TOKEN)
+        .send()
+        .await
+        .expect("get large after put");
+    assert_eq!(get_large_response.status(), StatusCode::OK);
+    let large_cache_status = get_large_response
+        .headers()
+        .get("X-CG-Status")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
+    assert_eq!(large_cache_status, "hit=0");
+    let large_body = get_large_response
+        .bytes()
+        .await
+        .expect("read large body");
+    assert_eq!(large_body.as_ref(), large_payload.as_slice());
+
+    let overwrite_payload = b"cachegate put overwrite".to_vec();
+    let overwrite_response = http
+        .put(&put_url)
+        .bearer_auth(TEST_BEARER_TOKEN)
+        .body(overwrite_payload.clone())
+        .send()
+        .await
+        .expect("put overwrite");
+    assert_eq!(overwrite_response.status(), StatusCode::OK);
+    let overwrite_get = http
+        .get(&put_url)
+        .bearer_auth(TEST_BEARER_TOKEN)
+        .send()
+        .await
+        .expect("get overwrite");
+    assert_eq!(overwrite_get.status(), StatusCode::OK);
+    let overwrite_body = overwrite_get
+        .bytes()
+        .await
+        .expect("read overwrite body");
+    assert_eq!(overwrite_body.as_ref(), overwrite_payload.as_slice());
     let sig = build_sig(&signing_key, store_id, &object_key, "GET");
     let url = format!("{base_url}/{store_id}/{object_key}?sig={sig}");
 
