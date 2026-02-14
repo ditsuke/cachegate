@@ -545,10 +545,21 @@ async fn fetch_and_cache_entry<C: CacheBackend>(
 
     let content_type = Some(resolve_content_type(path, &bytes));
     let elapsed_ms = start.elapsed().as_millis();
-    state
-        .cache
-        .put(key.clone(), bytes.clone(), content_type.clone())
-        .await;
+    let cap_bytes = state.cache_max_object_bytes as usize;
+    if cap_bytes == 0 || bytes.len() > cap_bytes {
+        info!(
+            bucket_id = %bucket_id,
+            path = %path,
+            size = bytes.len(),
+            cap_bytes,
+            "cache skipped; object exceeds cap"
+        );
+    } else {
+        state
+            .cache
+            .put(key.clone(), bytes.clone(), content_type.clone())
+            .await;
+    }
 
     let span = tracing::Span::current();
     span.record("bytes", bytes.len().to_string());
