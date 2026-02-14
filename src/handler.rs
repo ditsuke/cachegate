@@ -22,11 +22,13 @@ use crate::inflight::{Inflight, InflightPermit};
 use crate::metrics::{Metrics, UpstreamErrorKind};
 use crate::store::StoreMap;
 
+pub type InflightResult = Result<CacheEntry, AppError>;
+
 pub struct AppState<C: CacheBackend> {
     pub stores: StoreMap,
     pub auth: AuthState,
     pub cache: Arc<C>,
-    pub inflight: Arc<Inflight>,
+    pub inflight: Arc<Inflight<InflightResult>>,
     pub metrics: Arc<Metrics>,
     pub cache_max_object_bytes: u64,
 }
@@ -151,33 +153,41 @@ pub async fn get_object<C: CacheBackend + 'static>(
 
         let permit = state.inflight.acquire(&key).await;
         match permit {
-            InflightPermit::Leader(notify) => {
+            InflightPermit::Leader(guard) => {
                 span.record("inflight", "leader");
                 info!(bucket_id = %bucket_id, path = %path, "inflight leader fetch");
-                let result = fetch_and_cache_entry(&state, &key, &bucket_id, &path, method)
-                    .await
-                    .map(|entry| {
-                        response_bytes = Some(entry.bytes.len());
-                        build_response(entry, false)
-                    });
-                state.inflight.release(&key, notify).await;
-                break 'request result;
+                let result = fetch_and_cache_entry(&state, &key, &bucket_id, &path, method).await;
+                guard.complete(result.clone()).await;
+                break 'request result.map(|entry| {
+                    response_bytes = Some(entry.bytes.len());
+                    build_response(entry, false)
+                });
             }
-            InflightPermit::Follower(notify) => {
+            InflightPermit::Follower(entry) => {
                 span.record("inflight", "follower");
                 info!(bucket_id = %bucket_id, path = %path, "awaiting inflight leader");
-                notify.notified().await;
-                if let Some(entry) = state.cache.get(&key).await {
-                    response_bytes = Some(entry.bytes.len());
-                    info!(bucket_id = %bucket_id, path = %path, bytes = entry.bytes.len(), "served from cache after inflight");
-                    break 'request Ok(build_response(entry, true));
+                match entry.wait().await {
+                    Some(Ok(leader_entry)) => {
+                        if let Some(cached) = state.cache.get(&key).await {
+                            response_bytes = Some(cached.bytes.len());
+                            info!(bucket_id = %bucket_id, path = %path, bytes = cached.bytes.len(), "served from cache after inflight");
+                            break 'request Ok(build_response(cached, true));
+                        }
+                        response_bytes = Some(leader_entry.bytes.len());
+                        break 'request Ok(build_response(leader_entry, false));
+                    }
+                    Some(Err(err)) => break 'request Err(err),
+                    None => {
+                        break 'request fetch_and_cache_entry(
+                            &state, &key, &bucket_id, &path, method,
+                        )
+                        .await
+                        .map(|entry| {
+                            response_bytes = Some(entry.bytes.len());
+                            build_response(entry, false)
+                        });
+                    }
                 }
-                break 'request fetch_and_cache_entry(&state, &key, &bucket_id, &path, method)
-                    .await
-                    .map(|entry| {
-                        response_bytes = Some(entry.bytes.len());
-                        build_response(entry, false)
-                    });
             }
         }
     };
@@ -710,12 +720,11 @@ fn build_put_response() -> Response<Body> {
 }
 
 fn content_type_from_headers(headers: &HeaderMap, path: &str) -> Option<String> {
-    if let Some(value) = headers.get(header::CONTENT_TYPE) {
-        if let Ok(value) = value.to_str() {
-            if !value.is_empty() {
-                return Some(value.to_string());
-            }
-        }
+    if let Some(value) = headers.get(header::CONTENT_TYPE)
+        && let Ok(value) = value.to_str()
+        && !value.is_empty()
+    {
+        return Some(value.to_string());
     }
 
     mime_guess::from_path(path)
@@ -760,10 +769,11 @@ fn spawn_head_prefetch<C: CacheBackend + 'static>(
 
         let permit = state.inflight.acquire(&key).await;
         match permit {
-            InflightPermit::Leader(notify) => {
+            InflightPermit::Leader(guard) => {
                 span.record("inflight", "leader");
                 info!(bucket_id = %bucket_id, path = %path, "head prefetch leader fetch");
                 let result = fetch_and_cache_entry(&state, &key, &bucket_id, &path, "HEAD").await;
+                guard.complete(result.clone()).await;
                 match &result {
                     Ok(entry) => {
                         span.record("status", "ok");
@@ -785,9 +795,8 @@ fn spawn_head_prefetch<C: CacheBackend + 'static>(
                         );
                     }
                 }
-                state.inflight.release(&key, notify).await;
             }
-            InflightPermit::Follower(_notify) => {
+            InflightPermit::Follower(_entry) => {
                 span.record("inflight", "follower");
                 info!(
                     bucket_id = %bucket_id,
@@ -811,7 +820,7 @@ fn parse_bearer_token(headers: &HeaderMap) -> Option<String> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AppError {
     status: StatusCode,
     message: String,
