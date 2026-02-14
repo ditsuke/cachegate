@@ -9,7 +9,8 @@
 - [x] Optional sentry instrumentation.
 - [x] Prometheus metrics.
 - [x] Attributes on certain metrics. Move to using a prometheus lib.
-- [ ] Wire up foyer metrics with `mixtricks`
+- [x] Wire up foyer metrics with `mixtricks`
+- [ ] Distributed tracing: accept sentry trace baggage (?)
 
 ## Performance
 
@@ -23,6 +24,7 @@
 - [x] `/populate/{bucket}/{path}` endpoint to pre-populate cache. This would be useful for objects that are expected to be hot but haven't been accessed yet.
 - [ ] Multiple config files. If given, merge all in order before parsing final config. This can be useful when secrets
 are split in some environments, like in kubernetes with configmaps and secrets.
+- [ ] Stream through if object is too large
 
 ## Scaling
 
@@ -37,5 +39,5 @@ problem](https://arxiv.org/abs/1908.08762), but with the usecase I'm writing thi
 
 ## Scope Expansion
 
-- [ ] Expose PUT and DELETE endpoints
+- [ ] Write through: expose PUT. This is kind of important for fresh objects, object storage is _eventually_ consistent.
 - [ ] Object paging. Cachey has this as a **requirement**. We could have an _optional_ version of this design.
