@@ -914,7 +914,6 @@ dependencies = [
  "foyer",
  "futures",
  "infer",
- "lru",
  "mime_guess",
  "mixtrics",
  "object_store",

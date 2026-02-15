@@ -23,7 +23,6 @@ pub struct AuthConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct CachePolicy {
-    pub ttl_seconds: u64,
     #[serde(with = "bytesize_serde")]
     pub max_memory: ByteSize,
     #[serde(default)]

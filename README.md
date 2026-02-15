@@ -45,10 +45,9 @@ auth:
   bearer_token: "OPTIONAL_STATIC_TOKEN"
 
 cache:
-  ttl_seconds: 3600
   max_memory: 1GiB
   max_object_size: 64MiB
-  # Optional: enable hybrid disk-memory cache (Foyer)
+  # Optional: enable disk tier (Foyer). Omit or set to 0 for memory-only.
   # max_disk: 1GiB
   # disk_path: "/var/lib/cachegate/cache"
 
@@ -139,11 +138,10 @@ CACHEGATE__AUTH__PUBLIC_KEY=PfIG9MO7yrSFq4DNs7GPFC4CticILjGtqpoh43p3ipE
 CACHEGATE__AUTH__PRIVATE_KEY=NC7y4q2_rmnWBhlnEo34B9FddA0DkGlu7XGOs76bZn8
 CACHEGATE__AUTH__BEARER_TOKEN=cachegate-secret
 
-CACHEGATE__CACHE__TTL_SECONDS=3600
 CACHEGATE__CACHE__MAX_MEMORY=512MiB
 CACHEGATE__CACHE__MAX_OBJECT_SIZE=64MiB
 
-# Optional: hybrid disk-memory cache (Foyer)
+# Optional: disk tier (Foyer). Omit or set to 0 for memory-only.
 # CACHEGATE__CACHE__MAX_DISK=1GiB
 # CACHEGATE__CACHE__DISK_PATH=/var/lib/cachegate/cache
 
@@ -205,6 +203,6 @@ Optional Sentry instrumentation is enabled by setting `sentry.dsn` in config. Tr
   - Defaults to `max_memory` when unset
 - Objects larger than `max_object_size` are served but not cached
 - PUT overwrites are allowed but emit a warning log
-- Optional hybrid memory-disk backed cache (Foyer) for larger capacities:
-  - Set `max_disk` to enable hybrid disk-memory cache
+- Optional disk tier for larger capacities:
+  - Set `max_disk` to enable the disk tier
   - Set `disk_path` for persistent cache directory

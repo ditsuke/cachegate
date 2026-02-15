@@ -14,8 +14,9 @@ services:
           private_key: "NC7y4q2_rmnWBhlnEo34B9FddA0DkGlu7XGOs76bZn8"
           bearer_token: "hicg="
         cache:
-          ttl_seconds: 3600
-          max_bytes: 1073741824
+          max_memory: 500MiB
+          max_disk: 1GiB
+          max_object_size: 50MiB
         sentry:
           dsn: null
           environment: null

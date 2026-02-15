@@ -95,7 +95,6 @@ auth:
   bearer_token: "{TEST_BEARER_TOKEN}"
 
 cache:
-  ttl_seconds: 60
   max_memory: 10MB
   max_object_size: 1MiB
   max_disk: 15MiB

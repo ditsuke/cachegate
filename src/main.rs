@@ -28,7 +28,6 @@ mod store;
 
 use auth::AuthState;
 use cache::CacheBackend;
-use cache::MemoryCache;
 use cache::foyer::FoyerCache;
 use config::{Config, load_from_env};
 use handler::AppState;
@@ -148,41 +147,22 @@ async fn async_main(config: Config) -> anyhow::Result<()> {
 
     let metrics = Arc::new(Metrics::new());
 
-    // Use Foyer hybrid cache if disk config provided, otherwise MemoryCache
-    if config.cache.max_disk.as_u64() > 0 || config.cache.disk_path.is_some() {
-        let registry = metrics.registry();
-        let cache_max_object_bytes = if config.cache.max_object_size.as_u64() == 0 {
-            config.cache.max_memory.as_u64()
-        } else {
-            config.cache.max_object_size.as_u64()
-        };
-        let state = AppState::<FoyerCache> {
-            stores,
-            auth,
-            cache: Arc::new(
-                FoyerCache::new(config.cache.clone(), registry)
-                    .await
-                    .context("Failed to foyer cache")?,
-            ),
-            inflight: Arc::new(Inflight::new()),
-            metrics: metrics.clone(),
-            cache_max_object_bytes,
-        };
-        return run_server(Arc::new(state), config.listen).await;
-    }
-
-    tracing::info!("Using memory-only cache");
+    let registry = metrics.registry();
     let cache_max_object_bytes = if config.cache.max_object_size.as_u64() == 0 {
         config.cache.max_memory.as_u64()
     } else {
         config.cache.max_object_size.as_u64()
     };
-    let state = AppState::<MemoryCache> {
+    let state = AppState::<FoyerCache> {
         stores,
         auth,
-        cache: Arc::new(MemoryCache::new(config.cache.clone())),
+        cache: Arc::new(
+            FoyerCache::new(config.cache.clone(), registry)
+                .await
+                .context("Failed to foyer cache")?,
+        ),
         inflight: Arc::new(Inflight::new()),
-        metrics,
+        metrics: metrics.clone(),
         cache_max_object_bytes,
     };
     run_server(Arc::new(state), config.listen).await
