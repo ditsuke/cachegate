@@ -4,9 +4,6 @@ use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
 
 pub mod foyer;
-pub mod memory;
-
-pub use memory::MemoryCache;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CacheEntry {

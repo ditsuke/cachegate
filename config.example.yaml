@@ -8,7 +8,7 @@ auth:
 cache:
   max_memory: 1GB
   max_object_size: 64MiB
-  # Optional: enable hybrid disk-memory cache (Foyer)
+  # Optional: enable disk tier (Foyer). Omit or set to 0 for memory-only.
   # max_disk: 1GB
   # disk_path: "/var/lib/cachegate/cache"
 

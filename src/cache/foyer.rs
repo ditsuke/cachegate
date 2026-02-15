@@ -31,39 +31,53 @@ impl FoyerCache {
         }
 
         let disk_capacity = policy.max_disk.as_u64();
-        let disk_path = policy
-            .disk_path
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("/tmp/cachegate_cache"));
-
-        if disk_capacity == 0 {
-            return Err(anyhow!("max_disk must be > 0 when using Foyer cache"));
+        let disk_path = policy.disk_path.map(PathBuf::from);
+        if disk_capacity == 0 && disk_path.is_some() {
+            warn!("disk_path set but max_disk is 0; running in memory-only mode");
         }
 
-        std::fs::create_dir_all(&disk_path).context("failed to create disk cache directory")?;
-
-        let device = FsDeviceBuilder::new(&disk_path)
-            .with_capacity(disk_capacity as usize)
-            .build()
-            .context("failed to build disk cache device")?;
-
-        let cache = HybridCacheBuilder::new()
+        let builder = HybridCacheBuilder::new()
             .with_name("cachegate")
             .with_metrics_registry(registry)
-            .memory(max_bytes_memory as usize)
-            .storage()
-            .with_io_engine_config(PsyncIoEngineConfig::new())
-            .with_engine_config(BlockEngineConfig::new(device))
-            .build()
-            .await
-            .context("Failed to initialise cache")?;
+            .memory(max_bytes_memory as usize);
 
-        info!(
-            memory_capacity_bytes = max_bytes_memory,
-            disk_capacity_bytes = disk_capacity,
-            disk_path = %disk_path.display(),
-            "Foyer hybrid cache initialized"
-        );
+        let cache = if disk_capacity == 0 {
+            let cache = builder
+                .storage()
+                .build()
+                .await
+                .context("Failed to initialise cache")?;
+            info!(
+                memory_capacity_bytes = max_bytes_memory,
+                "Foyer cache initialized (memory-only)"
+            );
+            cache
+        } else {
+            let disk_path = disk_path
+                .clone()
+                .unwrap_or_else(|| PathBuf::from("/tmp/cachegate_cache"));
+            std::fs::create_dir_all(&disk_path).context("failed to create disk cache directory")?;
+
+            let device = FsDeviceBuilder::new(&disk_path)
+                .with_capacity(disk_capacity as usize)
+                .build()
+                .context("failed to build disk cache device")?;
+
+            let cache = builder
+                .storage()
+                .with_io_engine_config(PsyncIoEngineConfig::new())
+                .with_engine_config(BlockEngineConfig::new(device))
+                .build()
+                .await
+                .context("Failed to initialise cache")?;
+            info!(
+                memory_capacity_bytes = max_bytes_memory,
+                disk_capacity_bytes = disk_capacity,
+                disk_path = %disk_path.display(),
+                "Foyer hybrid cache initialized"
+            );
+            cache
+        };
 
         Ok(Self {
             cache,
@@ -132,23 +146,16 @@ mod tests {
 
     #[tokio::test]
     async fn new_rejects_zero_max_memory() {
-        let policy = make_policy(60, 0, 1024 * 1024, None);
+        let policy = make_policy(0, 0, None);
         let result = FoyerCache::new(policy, noop_registry()).await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
-    async fn new_rejects_zero_ttl() {
-        let policy = make_policy(0, 1024 * 1024, 1024 * 1024, None);
+    async fn new_allows_zero_max_disk() {
+        let policy = make_policy(60, 0, None);
         let result = FoyerCache::new(policy, noop_registry()).await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn new_rejects_zero_max_disk() {
-        let policy = make_policy(60, 1024 * 1024, 0, None);
-        let result = FoyerCache::new(policy, noop_registry()).await;
-        assert!(result.is_err());
+        assert!(result.is_ok());
     }
 
     #[tokio::test]
@@ -156,7 +163,6 @@ mod tests {
         let disk_dir = TempDir::new().unwrap();
         let policy = make_policy(
             60,
-            1024 * 1024,
             1024 * 1024,
             Some(disk_dir.path().to_string_lossy().to_string()),
         );
@@ -169,7 +175,6 @@ mod tests {
         let disk_dir = TempDir::new().unwrap();
         let policy = make_policy(
             60,
-            1024 * 1024,
             1024 * 1024,
             Some(disk_dir.path().to_string_lossy().to_string()),
         );
@@ -185,7 +190,6 @@ mod tests {
         let disk_dir = TempDir::new().unwrap();
         let policy = make_policy(
             60,
-            1024 * 1024,
             1024 * 1024,
             Some(disk_dir.path().to_string_lossy().to_string()),
         );
