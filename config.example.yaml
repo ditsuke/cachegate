@@ -6,7 +6,6 @@ auth:
   bearer_token: null
 
 cache:
-  ttl_seconds: 3600
   max_memory: 1GB
   max_object_size: 64MiB
   # Optional: enable hybrid disk-memory cache (Foyer)

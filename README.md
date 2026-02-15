@@ -45,7 +45,6 @@ auth:
   bearer_token: "OPTIONAL_STATIC_TOKEN"
 
 cache:
-  ttl_seconds: 3600
   max_memory: 1GiB
   max_object_size: 64MiB
   # Optional: enable hybrid disk-memory cache (Foyer)
@@ -139,7 +138,6 @@ CACHEGATE__AUTH__PUBLIC_KEY=PfIG9MO7yrSFq4DNs7GPFC4CticILjGtqpoh43p3ipE
 CACHEGATE__AUTH__PRIVATE_KEY=NC7y4q2_rmnWBhlnEo34B9FddA0DkGlu7XGOs76bZn8
 CACHEGATE__AUTH__BEARER_TOKEN=cachegate-secret
 
-CACHEGATE__CACHE__TTL_SECONDS=3600
 CACHEGATE__CACHE__MAX_MEMORY=512MiB
 CACHEGATE__CACHE__MAX_OBJECT_SIZE=64MiB
 

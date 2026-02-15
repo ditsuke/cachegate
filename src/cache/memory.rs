@@ -14,14 +14,12 @@ struct MemoryEntry {
     bytes: Bytes,
     content_type: Option<String>,
     size_bytes: u64,
-    expires_at: Instant,
 }
 
 struct CacheState {
     lru: LruCache<CacheKey, MemoryEntry>,
     total_bytes: u64,
     max_bytes: u64,
-    ttl_seconds: u64,
 }
 
 pub struct MemoryCache {
@@ -38,7 +36,6 @@ impl MemoryCache {
             lru,
             total_bytes: 0,
             max_bytes,
-            ttl_seconds: policy.ttl_seconds,
         };
 
         Self {
@@ -64,9 +61,6 @@ impl CacheBackend for MemoryCache {
             .lru
             .get(key)
             .map(|entry| {
-                if entry.expires_at <= now {
-                    LookupResult::Expired
-                } else {
                     LookupResult::Hit(CacheEntry::new(
                         entry.bytes.clone(),
                         entry.content_type.clone(),
@@ -90,10 +84,6 @@ impl CacheBackend for MemoryCache {
     #[tracing::instrument(skip(self, bytes, content_type))]
     async fn put(&self, key: CacheKey, bytes: Bytes, content_type: Option<String>) {
         let mut state = self.state.lock().await;
-        if state.max_bytes == 0 || state.ttl_seconds == 0 {
-            return;
-        }
-
         let size_bytes = bytes.len() as u64;
         if size_bytes > state.max_bytes {
             warn!(
@@ -110,12 +100,10 @@ impl CacheBackend for MemoryCache {
             state.total_bytes = state.total_bytes.saturating_sub(existing.size_bytes);
         }
 
-        let expires_at = Instant::now() + Duration::from_secs(state.ttl_seconds);
         let entry = MemoryEntry {
             bytes,
             content_type,
             size_bytes,
-            expires_at,
         };
 
         state.lru.put(key, entry);
