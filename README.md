@@ -2,7 +2,7 @@
 
 Minimal read/write caching proxy for S3 and Azure Blob Storage.
 
-Allows for presigned-URL style access to objects to allow for constrained public access.
+Reduce egress costs, speed up reads, generate reliably scoped public access links.
 
 Some design decisions are inspired by [Cachey](https://github.com/s2-streamstore/cachey).
 
@@ -18,7 +18,7 @@ Some design decisions are inspired by [Cachey](https://github.com/s2-streamstore
   - Presigned URL auth via `?sig=<payload>.<signature>`
   - Bearer token auth via `Authorization: Bearer <token>`
 - Modular store registry (`s3`, `azure`)
-- Hybrid disk-memory LRU cache (Foyer) with TTL + max bytes + disk persistence
+- Hybrid disk-memory LRU cache backed by [Foyer](https://foyer-rs.github.io/).
 - Singleflight on cache misses to avoid thundering herd
 - Content-Type prefill, from path with `magic` fallback.
 - Streaming write-through uploads.
