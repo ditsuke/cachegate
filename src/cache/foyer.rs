@@ -37,6 +37,7 @@ impl FoyerCache {
         }
 
         let builder = HybridCacheBuilder::new()
+            .with_policy(foyer::HybridCachePolicy::WriteOnInsertion)
             .with_name("cachegate")
             .with_metrics_registry(registry)
             .memory(max_bytes_memory as usize)
