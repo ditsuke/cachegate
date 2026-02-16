@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use foyer::{
     BlockEngineConfig, DeviceBuilder, FsDeviceBuilder, HybridCache, HybridCacheBuilder,
-    PsyncIoEngineConfig,
+    PsyncIoEngineConfig, S3FifoConfig,
 };
 use mixtrics::metrics::BoxedRegistry;
 use std::path::PathBuf;
@@ -39,7 +39,9 @@ impl FoyerCache {
         let builder = HybridCacheBuilder::new()
             .with_name("cachegate")
             .with_metrics_registry(registry)
-            .memory(max_bytes_memory as usize);
+            .memory(max_bytes_memory as usize)
+            .with_shards(10) // TODO: have this in config
+            .with_eviction_config(S3FifoConfig::default());
 
         let cache = if disk_capacity == 0 {
             let cache = builder
@@ -60,6 +62,8 @@ impl FoyerCache {
 
             let device = FsDeviceBuilder::new(&disk_path)
                 .with_capacity(disk_capacity as usize)
+                // TODO: Allow throttling config
+                // TODO: Use direct unbuffered i/o on linux!
                 .build()
                 .context("failed to build disk cache device")?;
 
