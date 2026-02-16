@@ -72,6 +72,7 @@ impl FoyerCache {
                 .storage()
                 .with_io_engine_config(PsyncIoEngineConfig::new())
                 .with_engine_config(BlockEngineConfig::new(device))
+                .with_recover_mode(foyer::RecoverMode::Quiet)
                 .build()
                 .await
                 .context("Failed to initialise cache")?;
